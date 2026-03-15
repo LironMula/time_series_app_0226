@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'models.dart';
 
 class ContainerRepository {
@@ -21,10 +23,14 @@ class ContainerRepository {
   }
 
   DataContainer? getById(String id) {
-    return _containers.firstWhere(
-      (c) => c.id == id,
-      orElse: () => DataContainer(name: 'Unknown'),
-    );
+    final index = _containers.indexWhere((c) => c.id == id);
+    return index == -1 ? null : _containers[index];
+  }
+
+  void replaceAll(List<DataContainer> containers) {
+    _containers
+      ..clear()
+      ..addAll(containers);
   }
 }
 
@@ -51,4 +57,77 @@ class DataSetRepository {
     final i = _sets.indexWhere((s) => s.id == set.id);
     if (i != -1) _sets[i] = set;
   }
+
+  void removeByContainer(String containerId) {
+    final setIds = _sets
+        .where((s) => s.containerId == containerId)
+        .map((s) => s.id)
+        .toSet();
+    _sets.removeWhere((s) => s.containerId == containerId);
+    _points.removeWhere((p) => setIds.contains(p.dataSetId));
+  }
+
+  String exportContainerPayload(DataContainer container) {
+    final sets = getByContainer(container.id);
+    final setIds = sets.map((s) => s.id).toSet();
+    final points = _points.where((p) => setIds.contains(p.dataSetId)).toList();
+
+    return const JsonEncoder.withIndent('  ').convert({
+      'container': container.toJson(),
+      'sets': sets.map((s) => s.toJson()).toList(),
+      'points': points.map((p) => p.toJson()).toList(),
+    });
+  }
+
+  ImportedContainerData importContainerPayload(String jsonText) {
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+    final container = DataContainer.fromJson(
+      (decoded['container'] as Map).cast<String, dynamic>(),
+    );
+    final sets = ((decoded['sets'] as List?) ?? const [])
+        .map((e) => DataSet.fromJson((e as Map).cast<String, dynamic>()))
+        .toList();
+    final points = ((decoded['points'] as List?) ?? const [])
+        .map((e) => DataPoint.fromJson((e as Map).cast<String, dynamic>()))
+        .toList();
+    return ImportedContainerData(container: container, sets: sets, points: points);
+  }
+
+  void mergeImported(ImportedContainerData imported, {required String newContainerId}) {
+    final setIdMap = <String, String>{};
+    for (final set in imported.sets) {
+      final newSet = DataSet(
+        containerId: newContainerId,
+        createdAt: set.createdAt,
+        startTime: set.startTime,
+        notes: set.notes,
+      );
+      setIdMap[set.id] = newSet.id;
+      _sets.add(newSet);
+    }
+
+    for (final point in imported.points) {
+      final mappedId = setIdMap[point.dataSetId];
+      if (mappedId == null) continue;
+      _points.add(
+        DataPoint(
+          dataSetId: mappedId,
+          tSeconds: point.tSeconds,
+          value: point.value,
+        ),
+      );
+    }
+  }
+}
+
+class ImportedContainerData {
+  final DataContainer container;
+  final List<DataSet> sets;
+  final List<DataPoint> points;
+
+  ImportedContainerData({
+    required this.container,
+    required this.sets,
+    required this.points,
+  });
 }
