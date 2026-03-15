@@ -16,16 +16,17 @@ final dataSetRepoProvider = Provider<DataSetRepository>((ref) {
 final containersProvider =
     StateNotifierProvider<ContainersNotifier, List<DataContainer>>((ref) {
   final repo = ref.read(containerRepoProvider);
-  return ContainersNotifier(repo);
+  return ContainersNotifier(ref, repo);
 });
 
 class ContainersNotifier extends StateNotifier<List<DataContainer>> {
+  final Ref _ref;
   final ContainerRepository _repo;
 
-  ContainersNotifier(this._repo) : super(_repo.getAll());
+  ContainersNotifier(this._ref, this._repo) : super(_repo.getAll());
 
-  void create(String name) {
-    final c = DataContainer(name: name);
+  void create(String name, {ContainerSettings? settings}) {
+    final c = DataContainer(name: name, settings: settings);
     _repo.add(c);
     state = _repo.getAll();
   }
@@ -38,6 +39,7 @@ class ContainersNotifier extends StateNotifier<List<DataContainer>> {
 
   void remove(String id) {
     _repo.remove(id);
+    _ref.read(dataSetRepoProvider).removeByContainer(id);
     state = _repo.getAll();
   }
 
@@ -55,7 +57,24 @@ final dataSetsProvider = Provider.family<List<DataSet>, String>((ref, containerI
   return repo.getByContainer(containerId);
 });
 
-/// Collection session state
+class CollectionStartConfig {
+  final bool assistedEnabled;
+  final int assistedDtSeconds;
+  final CueType cueType;
+
+  const CollectionStartConfig({
+    required this.assistedEnabled,
+    required this.assistedDtSeconds,
+    required this.cueType,
+  });
+
+  factory CollectionStartConfig.fromSettings(ContainerSettings settings) =>
+      CollectionStartConfig(
+        assistedEnabled: settings.assistedEnabled,
+        assistedDtSeconds: settings.assistedDt.inSeconds,
+        cueType: settings.cueType,
+      );
+}
 
 class CollectionState {
   final bool isRunning;
@@ -103,8 +122,7 @@ class CollectionController extends StateNotifier<CollectionState> {
   Timer? _timer;
   Duration _sinceLastPoint = Duration.zero;
 
-  CollectionController(this._ref, this._repo)
-      : super(CollectionState.initial());
+  CollectionController(this._ref, this._repo) : super(CollectionState.initial());
 
   void start(String containerId) {
     if (state.isRunning) return;
@@ -121,6 +139,17 @@ class CollectionController extends StateNotifier<CollectionState> {
     _timer = Timer.periodic(const Duration(seconds: 1), _onTick);
   }
 
+  void applyStartConfig(String containerId, CollectionStartConfig config) {
+    final container = _ref.read(containerRepoProvider).getById(containerId);
+    if (container == null) return;
+    final updatedSettings = container.settings.copyWith(
+      assistedEnabled: config.assistedEnabled,
+      assistedDt: Duration(seconds: config.assistedDtSeconds),
+      cueType: config.cueType,
+    );
+    _ref.read(containersProvider.notifier).updateSettings(containerId, updatedSettings);
+  }
+
   void _onTick(Timer t) {
     if (!state.isRunning) return;
     final newElapsed = state.elapsed + const Duration(seconds: 1);
@@ -135,7 +164,6 @@ class CollectionController extends StateNotifier<CollectionState> {
     if (!settings.assistedEnabled) return;
 
     if (_sinceLastPoint >= settings.assistedDt) {
-      _triggerCue(settings.cueType);
       _sinceLastPoint = Duration.zero;
       final ignored = state.ignoredCues + 1;
       state = state.copyWith(ignoredCues: ignored);
@@ -143,10 +171,6 @@ class CollectionController extends StateNotifier<CollectionState> {
         stop();
       }
     }
-  }
-
-  void _triggerCue(CueType cueType) {
-    // TODO: integrate with beep / flashlight plugins.
   }
 
   void tapValue(int value) {

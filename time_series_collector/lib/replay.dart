@@ -3,70 +3,78 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models.dart';
-import 'repositories.dart';
 import 'providers.dart';
+import 'repositories.dart';
 
 class ReplayState {
   final bool isRunning;
   final DataSet? sourceSet;
-  final double stretchFactor; // 0.5 - 2.0
   final Duration elapsed;
   final DataPoint? nextTarget;
+  final double stretchFactor;
+  final bool interpolationEnabled;
 
   const ReplayState({
     required this.isRunning,
     this.sourceSet,
-    this.stretchFactor = 1.0,
     this.elapsed = Duration.zero,
     this.nextTarget,
+    this.stretchFactor = 1.0,
+    this.interpolationEnabled = false,
   });
 
   ReplayState copyWith({
     bool? isRunning,
     DataSet? sourceSet,
-    double? stretchFactor,
     Duration? elapsed,
     DataPoint? nextTarget,
+    double? stretchFactor,
+    bool? interpolationEnabled,
   }) {
     return ReplayState(
       isRunning: isRunning ?? this.isRunning,
       sourceSet: sourceSet ?? this.sourceSet,
-      stretchFactor: stretchFactor ?? this.stretchFactor,
       elapsed: elapsed ?? this.elapsed,
       nextTarget: nextTarget ?? this.nextTarget,
+      stretchFactor: stretchFactor ?? this.stretchFactor,
+      interpolationEnabled: interpolationEnabled ?? this.interpolationEnabled,
     );
   }
 
   factory ReplayState.initial() => const ReplayState(isRunning: false);
 }
 
-final replayProvider =
-    StateNotifierProvider<ReplayController, ReplayState>((ref) {
+final replayProvider = StateNotifierProvider<ReplayController, ReplayState>((ref) {
   final dsRepo = ref.read(dataSetRepoProvider);
-  return ReplayController(ref, dsRepo);
+  return ReplayController(dsRepo);
 });
 
 class ReplayController extends StateNotifier<ReplayState> {
-  final Ref _ref;
   final DataSetRepository _repo;
   Timer? _timer;
   List<DataPoint> _points = [];
 
-  ReplayController(this._ref, this._repo) : super(ReplayState.initial());
+  ReplayController(this._repo) : super(ReplayState.initial());
 
-  void startReplay(DataSet source, {double stretchFactor = 1.0}) {
+  void startReplay(
+    DataSet source, {
+    required double stretchFactor,
+    required bool interpolationEnabled,
+  }) {
     if (state.isRunning) stop();
-    _points = _repo.getPoints(source.id);
-    if (_points.isEmpty) return;
+    final rawPoints = _repo.getPoints(source.id);
+    if (rawPoints.isEmpty) return;
 
+    _points = interpolationEnabled ? _interpolate(rawPoints) : rawPoints;
     _points.sort((a, b) => a.tSeconds.compareTo(b.tSeconds));
 
     state = ReplayState(
       isRunning: true,
       sourceSet: source,
-      stretchFactor: stretchFactor,
       elapsed: Duration.zero,
       nextTarget: _points.first,
+      stretchFactor: stretchFactor,
+      interpolationEnabled: interpolationEnabled,
     );
 
     _timer = Timer.periodic(const Duration(milliseconds: 200), _onTick);
@@ -77,24 +85,45 @@ class ReplayController extends StateNotifier<ReplayState> {
       return;
     }
 
-    final newElapsed =
-        state.elapsed + const Duration(milliseconds: 200);
-    state = state.copyWith(elapsed: newElapsed);
-
-    final scaledSeconds = newElapsed.inMilliseconds / 1000.0;
-    final stretchedTime =
-        scaledSeconds / state.stretchFactor; // t' = t / k
+    final newElapsed = state.elapsed + const Duration(milliseconds: 200);
+    final stretchedTime = (newElapsed.inMilliseconds / 1000.0) / state.stretchFactor;
 
     final next = _points.firstWhere(
       (p) => p.tSeconds >= stretchedTime,
       orElse: () => _points.last,
     );
 
-    state = state.copyWith(nextTarget: next);
+    state = state.copyWith(elapsed: newElapsed, nextTarget: next);
 
     if (stretchedTime >= _points.last.tSeconds) {
       stop();
     }
+  }
+
+  List<DataPoint> _interpolate(List<DataPoint> source) {
+    final result = <DataPoint>[];
+    for (int i = 0; i < source.length; i++) {
+      final current = source[i];
+      result.add(current);
+      if (i == source.length - 1) continue;
+      final next = source[i + 1];
+      final valueDelta = next.value - current.value;
+      final steps = valueDelta.abs();
+      if (steps <= 1) continue;
+
+      final dt = (next.tSeconds - current.tSeconds) / steps;
+      final direction = valueDelta.sign;
+      for (int k = 1; k < steps; k++) {
+        result.add(
+          DataPoint(
+            dataSetId: current.dataSetId,
+            tSeconds: current.tSeconds + (dt * k),
+            value: current.value + (direction * k),
+          ),
+        );
+      }
+    }
+    return result;
   }
 
   void stop() {

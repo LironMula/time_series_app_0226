@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'histogram_page.dart';
 import 'models.dart';
 import 'providers.dart';
-import 'visualization_page.dart';
 import 'replay_page.dart';
-import 'histogram_page.dart';
-
+import 'visualization_page.dart';
 
 void main() {
   runApp(const ProviderScope(child: TimeSeriesApp()));
@@ -28,282 +28,478 @@ class TimeSeriesApp extends StatelessWidget {
   }
 }
 
-class HomePage extends ConsumerWidget {
+class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
+
+  @override
+  ConsumerState<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends ConsumerState<HomePage> {
+  int _tabIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = ref.watch(selectedContainerIdProvider);
+    final tabs = [
+      _ManagementTab(selectedId: selectedId),
+      _CollectionTab(selectedId: selectedId),
+      _VisualizationTab(selectedId: selectedId),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Time Series Collector')),
+      body: tabs[_tabIndex],
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.settings), label: 'Management'),
+          NavigationDestination(icon: Icon(Icons.sensors), label: 'Collection'),
+          NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Visualisation'),
+        ],
+        onDestinationSelected: (value) => setState(() => _tabIndex = value),
+      ),
+    );
+  }
+}
+
+class _ContainerSelector extends ConsumerWidget {
+  final String? selectedId;
+
+  const _ContainerSelector({required this.selectedId});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final containers = ref.watch(containersProvider);
-    final selectedId = ref.watch(selectedContainerIdProvider);
+    return DropdownButton<String>(
+      value: selectedId,
+      hint: const Text('Select container'),
+      isExpanded: true,
+      items: containers
+          .map((c) => DropdownMenuItem(value: c.id, child: Text(c.name)))
+          .toList(),
+      onChanged: (value) =>
+          ref.read(selectedContainerIdProvider.notifier).state = value,
+    );
+  }
+}
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Time Series Collector'),
-      ),
-      body: Row(
+class _ManagementTab extends ConsumerWidget {
+  final String? selectedId;
+
+  const _ManagementTab({required this.selectedId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final containers = ref.watch(containersProvider);
+    final selected = selectedId == null
+        ? null
+        : containers.where((c) => c.id == selectedId).firstOrNull;
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 2,
-            child: Column(
+          _ContainerSelector(selectedId: selectedId),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () async {
+                  final name = await _askForText(context, title: 'New container');
+                  if (name == null || name.trim().isEmpty) return;
+                  ref.read(containersProvider.notifier).create(name.trim());
+                },
+                icon: const Icon(Icons.add),
+                label: const Text('Create'),
+              ),
+              ElevatedButton.icon(
+                onPressed: selected == null
+                    ? null
+                    : () async {
+                        final name = await _askForText(
+                          context,
+                          title: 'Rename container',
+                          initialText: selected.name,
+                        );
+                        if (name == null || name.trim().isEmpty) return;
+                        ref.read(containersProvider.notifier).rename(selected.id, name.trim());
+                      },
+                icon: const Icon(Icons.edit),
+                label: const Text('Rename'),
+              ),
+              ElevatedButton.icon(
+                onPressed: selected == null
+                    ? null
+                    : () => ref.read(containersProvider.notifier).remove(selected.id),
+                icon: const Icon(Icons.delete),
+                label: const Text('Delete'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (selected != null) ...[
+            Text('Buckets (${selected.name})', style: Theme.of(context).textTheme.titleMedium),
+            ...selected.settings.buckets.map((b) => ListTile(
+                  dense: true,
+                  title: Text('Range ${b.label}'),
+                  trailing: CircleAvatar(radius: 8, backgroundColor: Color(b.color)),
+                )),
+            ElevatedButton(
+              onPressed: () async {
+                final csv = await _askForText(
+                  context,
+                  title: 'Buckets as min-max;color',
+                  initialText: selected.settings.buckets
+                      .map((b) => '${b.minInclusive}-${b.maxInclusive};${b.color.toRadixString(16)}')
+                      .join(','),
+                );
+                if (csv == null || csv.isEmpty) return;
+                final parsed = _parseBucketCsv(csv);
+                if (parsed.isEmpty) return;
+                ref.read(containersProvider.notifier).updateSettings(
+                      selected.id,
+                      selected.settings.copyWith(buckets: parsed),
+                    );
+              },
+              child: const Text('Edit buckets'),
+            ),
+            const Divider(),
+            Wrap(
+              spacing: 8,
               children: [
-                const Padding(
-                  padding: EdgeInsets.all(8),
-                  child: Text('Containers',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      )),
+                ElevatedButton(
+                  onPressed: () {
+                    final payload = ref.read(dataSetRepoProvider).exportContainerPayload(selected);
+                    Clipboard.setData(ClipboardData(text: payload));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Export copied to clipboard')),
+                    );
+                  },
+                  child: const Text('Export container'),
                 ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: containers.length,
-                    itemBuilder: (context, index) {
-                      final c = containers[index];
-                      final selected = c.id == selectedId;
-                      return ListTile(
-                        title: Text(c.name),
-                        selected: selected,
-                        onTap: () => ref
-                            .read(selectedContainerIdProvider.notifier)
-                            .state = c.id,
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete),
-                          onPressed: () {
-                            ref.read(containersProvider.notifier).remove(c.id);
-                            if (selectedId == c.id) {
-                              ref
-                                  .read(selectedContainerIdProvider.notifier)
-                                  .state = null;
-                            }
-                          },
-                        ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final payload = await _askForText(
+                      context,
+                      title: 'Paste exported JSON',
+                    );
+                    if (payload == null || payload.trim().isEmpty) return;
+                    try {
+                      final imported = ref.read(dataSetRepoProvider).importContainerPayload(payload);
+                      final newContainer = imported.container.copyWith(
+                        name: '${imported.container.name} (imported)',
                       );
-                    },
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add container'),
-                    onPressed: () async {
-                      final name = await _askForText(
-                        context,
-                        title: 'New container',
-                        hint: 'Container name',
-                      );
-                      if (name != null && name.trim().isNotEmpty) {
-                        ref.read(containersProvider.notifier).create(name);
+                      ref.read(containersProvider.notifier).create(
+                            newContainer.name,
+                            settings: newContainer.settings,
+                          );
+                      final actual = ref.read(containersProvider).last;
+                      ref
+                          .read(dataSetRepoProvider)
+                          .mergeImported(imported, newContainerId: actual.id);
+                    } catch (_) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Invalid import payload')),
+                        );
                       }
-                    },
-                  ),
+                    }
+                  },
+                  child: const Text('Import container'),
                 ),
               ],
             ),
-          ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            flex: 3,
-            child: _RightPane(selectedId: selectedId),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  Future<String?> _askForText(
-    BuildContext context, {
-    required String title,
-    String? hint,
-  }) {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            decoration: InputDecoration(hintText: hint),
+  List<ValueBucket> _parseBucketCsv(String csv) {
+    final parts = csv.split(',');
+    final result = <ValueBucket>[];
+    for (final part in parts) {
+      final pair = part.trim().split(';');
+      if (pair.length != 2) continue;
+      final range = pair[0].split('-');
+      if (range.length != 2) continue;
+      final min = int.tryParse(range[0]);
+      final max = int.tryParse(range[1]);
+      final color = int.tryParse(pair[1], radix: 16);
+      if (min == null || max == null || color == null) continue;
+      result.add(ValueBucket(minInclusive: min, maxInclusive: max, color: color));
+    }
+    return result;
+  }
+}
+
+class _CollectionTab extends ConsumerWidget {
+  final String? selectedId;
+
+  const _CollectionTab({required this.selectedId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (selectedId == null) return const Center(child: Text('Select a container in management tab'));
+    final collectionState = ref.watch(collectionProvider);
+    final container = ref.watch(containersProvider).firstWhere((c) => c.id == selectedId);
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Container: ${container.name}'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            children: [
+              ElevatedButton(
+                onPressed: collectionState.isRunning
+                    ? null
+                    : () async {
+                        final config = await showDialog<CollectionStartConfig>(
+                          context: context,
+                          builder: (_) => _CollectionConfigDialog(settings: container.settings),
+                        );
+                        if (config == null) return;
+                        ref.read(collectionProvider.notifier).applyStartConfig(selectedId!, config);
+                        ref.read(collectionProvider.notifier).start(selectedId!);
+                      },
+                child: const Text('Start collection'),
+              ),
+              ElevatedButton(
+                onPressed: collectionState.isRunning
+                    ? () async {
+                        final notes = await _askForText(context, title: 'Notes');
+                        ref.read(collectionProvider.notifier).stop(notes: notes);
+                      }
+                    : null,
+                child: const Text('Stop collection'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => ReplayPage(containerId: selectedId!)),
+                ),
+                child: const Text('Replay mode'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('OK'),
+          const SizedBox(height: 12),
+          if (collectionState.isRunning) ...[
+            Text('Elapsed: ${collectionState.elapsed.inSeconds}s | ignored cues: ${collectionState.ignoredCues}'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 6,
+              children: List.generate(
+                11,
+                (i) => ElevatedButton(
+                  onPressed: () => ref.read(collectionProvider.notifier).tapValue(i),
+                  child: Text('$i'),
+                ),
+              ),
             ),
           ],
-        );
-      },
+        ],
+      ),
     );
   }
 }
 
-class _RightPane extends ConsumerWidget {
+class _VisualizationTab extends ConsumerStatefulWidget {
   final String? selectedId;
 
-  const _RightPane({required this.selectedId});
+  const _VisualizationTab({required this.selectedId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_VisualizationTab> createState() => _VisualizationTabState();
+}
+
+class _VisualizationTabState extends ConsumerState<_VisualizationTab> {
+  final Set<String> _selectedSetIds = <String>{};
+
+  @override
+  void didUpdateWidget(covariant _VisualizationTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedId != widget.selectedId) {
+      _selectedSetIds.clear();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = widget.selectedId;
     if (selectedId == null) {
-      return const Center(child: Text('Select or create a container'));
+      return const Center(child: Text('Select a container in management tab'));
     }
 
-    final collectionState = ref.watch(collectionProvider);
-    final sets = ref.watch(dataSetsProvider(selectedId!));
+    final sets = ref.watch(dataSetsProvider(selectedId));
+    final validIds = sets.map((s) => s.id).toSet();
+    _selectedSetIds.removeWhere((id) => !validIds.contains(id));
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
             children: [
-              Text('Container: $selectedId'),
-              const Spacer(),
               ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ReplayPage(containerId: selectedId!),
-                    ),
-                  );
-                },
-                child: const Text('Replay'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => HistogramPage(containerId: selectedId!),
-                    ),
-                  );
-                },
-                child: const Text('Histogram'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: collectionState.isRunning
+                onPressed: _selectedSetIds.isEmpty
                     ? null
-                    : () => ref
-                        .read(collectionProvider.notifier)
-                        .start(selectedId!),
-                child: const Text('Start collection'),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: collectionState.isRunning
-                    ? () async {
-                        final notes = await _askForText(
-                          context,
-                          title: 'Notes for this data set',
-                          hint: 'Optional notes',
-                        );
-                        ref
-                            .read(collectionProvider.notifier)
-                            .stop(notes: notes);
-                      }
-                    : null,
-                child: const Text('Stop'),
-              ),
-            ],
-          ),
-        ),
-        if (collectionState.isRunning)
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              children: [
-                Text(
-                    'Elapsed: ${collectionState.elapsed.inSeconds} s, ignored cues: ${collectionState.ignoredCues}'),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
-                  children: List.generate(11, (i) {
-                    return ElevatedButton(
-                      onPressed: () => ref
-                          .read(collectionProvider.notifier)
-                          .tapValue(i),
-                      child: Text('$i'),
-                    );
-                  }),
-                ),
-              ],
-            ),
-          ),
-        const Divider(),
-        Expanded(
-          child: Column(
-            children: [
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text('Data sets'),
-              ),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: sets.length,
-                  itemBuilder: (context, i) {
-                    final s = sets[i];
-                    return ListTile(
-                      title: Text(
-                          'Created: ${s.createdAt.toIso8601String().substring(0, 19)}'),
-                      subtitle: Text(s.notes.isEmpty ? '(no notes)' : s.notes),
-                      onTap: () {
-                        Navigator.push(
+                    : () => Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (_) => VisualizationPage(
-                              dataSetId: s.id,
-                              containerId: s.containerId,
+                              containerId: selectedId,
+                              selectedDataSetIds: _selectedSetIds.toList(),
                             ),
                           ),
-                        );
-                      },
-                    );
+                        ),
+                child: const Text('Compare selected sets'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => HistogramPage(containerId: selectedId)),
+                ),
+                child: const Text('Period histogram'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ListView.builder(
+              itemCount: sets.length,
+              itemBuilder: (context, index) {
+                final set = sets[index];
+                final selected = _selectedSetIds.contains(set.id);
+                return CheckboxListTile(
+                  value: selected,
+                  title: Text(set.createdAt.toIso8601String().substring(0, 19)),
+                  subtitle: Text(set.notes.isEmpty ? '(no notes)' : set.notes),
+                  onChanged: (value) {
+                    setState(() {
+                      if (value == true) {
+                        _selectedSetIds.add(set.id);
+                      } else {
+                        _selectedSetIds.remove(set.id);
+                      }
+                    });
                   },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CollectionConfigDialog extends StatefulWidget {
+  final ContainerSettings settings;
+
+  const _CollectionConfigDialog({required this.settings});
+
+  @override
+  State<_CollectionConfigDialog> createState() => _CollectionConfigDialogState();
+}
+
+class _CollectionConfigDialogState extends State<_CollectionConfigDialog> {
+  late bool _assisted;
+  late int _dt;
+  late CueType _cue;
+
+  @override
+  void initState() {
+    super.initState();
+    _assisted = widget.settings.assistedEnabled;
+    _dt = widget.settings.assistedDt.inSeconds;
+    _cue = widget.settings.cueType;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Collection configuration'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SwitchListTile(
+            value: _assisted,
+            onChanged: (v) => setState(() => _assisted = v),
+            title: const Text('Assisted collection'),
+          ),
+          Row(
+            children: [
+              const Text('Reminder every (seconds):'),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Slider(
+                  value: _dt.toDouble(),
+                  min: 2,
+                  max: 60,
+                  divisions: 58,
+                  label: '$_dt',
+                  onChanged: _assisted ? (v) => setState(() => _dt = v.round()) : null,
                 ),
               ),
             ],
           ),
+          DropdownButton<CueType>(
+            value: _cue,
+            items: CueType.values
+                .map((cue) => DropdownMenuItem(value: cue, child: Text(cue.name)))
+                .toList(),
+            onChanged: _assisted ? (v) => setState(() => _cue = v ?? CueType.beep) : null,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(
+          onPressed: () => Navigator.pop(
+            context,
+            CollectionStartConfig(
+              assistedEnabled: _assisted,
+              assistedDtSeconds: _dt,
+              cueType: _cue,
+            ),
+          ),
+          child: const Text('Start'),
         ),
       ],
     );
   }
+}
 
-  Future<String?> _askForText(
-    BuildContext context, {
-    required String title,
-    String? hint,
-  }) {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            decoration: InputDecoration(hintText: hint),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, controller.text),
-              child: const Text('OK'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+Future<String?> _askForText(
+  BuildContext context, {
+  required String title,
+  String? initialText,
+}) {
+  final controller = TextEditingController(text: initialText);
+  return showDialog<String>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: Text(title),
+        content: TextField(controller: controller, maxLines: null),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('OK')),
+        ],
+      );
+    },
+  );
+}
+
+extension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
