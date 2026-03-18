@@ -45,6 +45,7 @@ class ContainerSettings {
   final ReplayStretchMode replayStretchMode;
   final double replayStretchFactor;
   final int replayFixedDurationSeconds;
+  final bool stopMeasurementOnTen;
 
   const ContainerSettings({
     required this.assistedDt,
@@ -55,6 +56,7 @@ class ContainerSettings {
     required this.replayStretchMode,
     required this.replayStretchFactor,
     required this.replayFixedDurationSeconds,
+    required this.stopMeasurementOnTen,
   });
 
   ContainerSettings copyWith({
@@ -66,6 +68,7 @@ class ContainerSettings {
     ReplayStretchMode? replayStretchMode,
     double? replayStretchFactor,
     int? replayFixedDurationSeconds,
+    bool? stopMeasurementOnTen,
   }) {
     return ContainerSettings(
       assistedDt: assistedDt ?? this.assistedDt,
@@ -78,6 +81,7 @@ class ContainerSettings {
       replayStretchFactor: replayStretchFactor ?? this.replayStretchFactor,
       replayFixedDurationSeconds:
           replayFixedDurationSeconds ?? this.replayFixedDurationSeconds,
+      stopMeasurementOnTen: stopMeasurementOnTen ?? this.stopMeasurementOnTen,
     );
   }
 
@@ -97,6 +101,7 @@ class ContainerSettings {
       replayStretchMode: ReplayStretchMode.factor,
       replayStretchFactor: 1.0,
       replayFixedDurationSeconds: 60,
+      stopMeasurementOnTen: false,
     );
   }
 
@@ -109,6 +114,7 @@ class ContainerSettings {
         'replayStretchMode': replayStretchMode.name,
         'replayStretchFactor': replayStretchFactor,
         'replayFixedDurationSeconds': replayFixedDurationSeconds,
+        'stopMeasurementOnTen': stopMeasurementOnTen,
       };
 
   factory ContainerSettings.fromJson(Map<String, dynamic> json) => ContainerSettings(
@@ -125,6 +131,7 @@ class ContainerSettings {
         replayStretchFactor: (json['replayStretchFactor'] as num?)?.toDouble() ?? 1.0,
         replayFixedDurationSeconds:
             json['replayFixedDurationSeconds'] as int? ?? 60,
+        stopMeasurementOnTen: json['stopMeasurementOnTen'] as bool? ?? false,
       );
 }
 
@@ -178,6 +185,7 @@ class DataSet {
   final DateTime createdAt;
   final DateTime startTime;
   final String notes;
+  final bool starred;
 
   DataSet({
     String? id,
@@ -185,17 +193,19 @@ class DataSet {
     DateTime? createdAt,
     DateTime? startTime,
     this.notes = '',
+    this.starred = false,
   })  : id = id ?? newId(),
         createdAt = createdAt ?? DateTime.now(),
         startTime = startTime ?? DateTime.now();
 
-  DataSet copyWith({String? notes}) {
+  DataSet copyWith({String? notes, bool? starred}) {
     return DataSet(
       id: id,
       containerId: containerId,
       createdAt: createdAt,
       startTime: startTime,
       notes: notes ?? this.notes,
+      starred: starred ?? this.starred,
     );
   }
 
@@ -205,6 +215,7 @@ class DataSet {
         'createdAt': createdAt.toIso8601String(),
         'startTime': startTime.toIso8601String(),
         'notes': notes,
+        'starred': starred,
       };
 
   factory DataSet.fromJson(Map<String, dynamic> json) => DataSet(
@@ -213,6 +224,7 @@ class DataSet {
         createdAt: DateTime.parse(json['createdAt'] as String),
         startTime: DateTime.parse(json['startTime'] as String),
         notes: json['notes'] as String? ?? '',
+        starred: json['starred'] as bool? ?? false,
       );
 }
 

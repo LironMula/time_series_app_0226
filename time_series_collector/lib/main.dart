@@ -71,8 +71,9 @@ class _ContainerSelector extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final containers = ref.watch(containersProvider);
+    final normalizedValue = containers.any((c) => c.id == selectedId) ? selectedId : null;
     return DropdownButton<String>(
-      value: selectedId,
+      value: normalizedValue,
       hint: const Text('Select container'),
       isExpanded: true,
       items: containers
@@ -141,30 +142,52 @@ class _ManagementTab extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           if (selected != null) ...[
-            Text('Buckets (${selected.name})', style: Theme.of(context).textTheme.titleMedium),
-            ...selected.settings.buckets.map((b) => ListTile(
-                  dense: true,
-                  title: Text('Range ${b.label}'),
-                  trailing: CircleAvatar(radius: 8, backgroundColor: Color(b.color)),
-                )),
-            ElevatedButton(
-              onPressed: () async {
-                final csv = await _askForText(
-                  context,
-                  title: 'Buckets as min-max;color',
-                  initialText: selected.settings.buckets
-                      .map((b) => '${b.minInclusive}-${b.maxInclusive};${b.color.toRadixString(16)}')
-                      .join(','),
-                );
-                if (csv == null || csv.isEmpty) return;
-                final parsed = _parseBucketCsv(csv);
-                if (parsed.isEmpty) return;
+            Text('Container properties', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: selected.settings.stopMeasurementOnTen,
+              title: const Text('Stop measurement if value = 10'),
+              onChanged: (value) {
                 ref.read(containersProvider.notifier).updateSettings(
                       selected.id,
-                      selected.settings.copyWith(buckets: parsed),
+                      selected.settings.copyWith(stopMeasurementOnTen: value),
                     );
               },
-              child: const Text('Edit buckets'),
+            ),
+            ExpansionTile(
+              title: Text('Histogram bucket configuration (${selected.name})'),
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 12),
+              children: [
+                ...selected.settings.buckets.map((b) => ListTile(
+                      dense: true,
+                      title: Text('Range ${b.label}'),
+                      trailing: CircleAvatar(radius: 8, backgroundColor: Color(b.color)),
+                    )),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      final csv = await _askForText(
+                        context,
+                        title: 'Buckets as min-max;color',
+                        initialText: selected.settings.buckets
+                            .map((b) => '${b.minInclusive}-${b.maxInclusive};${b.color.toRadixString(16)}')
+                            .join(','),
+                      );
+                      if (csv == null || csv.isEmpty) return;
+                      final parsed = _parseBucketCsv(csv);
+                      if (parsed.isEmpty) return;
+                      ref.read(containersProvider.notifier).updateSettings(
+                            selected.id,
+                            selected.settings.copyWith(buckets: parsed),
+                          );
+                    },
+                    child: const Text('Edit buckets'),
+                  ),
+                ),
+              ],
             ),
             const Divider(),
             Wrap(

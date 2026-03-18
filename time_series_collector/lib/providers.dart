@@ -52,7 +52,10 @@ class ContainersNotifier extends StateNotifier<List<DataContainer>> {
 
 final selectedContainerIdProvider = StateProvider<String?>((ref) => null);
 
+final dataSetRefreshProvider = StateProvider<int>((ref) => 0);
+
 final dataSetsProvider = Provider.family<List<DataSet>, String>((ref, containerId) {
+  ref.watch(dataSetRefreshProvider);
   final repo = ref.watch(dataSetRepoProvider);
   return repo.getByContainer(containerId);
 });
@@ -124,10 +127,24 @@ class CollectionController extends StateNotifier<CollectionState> {
 
   CollectionController(this._ref, this._repo) : super(CollectionState.initial());
 
+  void _notifyDataSetChange() {
+    _ref.read(dataSetRefreshProvider.notifier).state++;
+  }
+
   void start(String containerId) {
     if (state.isRunning) return;
     final set = DataSet(containerId: containerId);
     _repo.addSet(set);
+    _notifyDataSetChange();
+    _startWithSet(containerId, set);
+  }
+
+  void startWithExistingSet(DataSet set) {
+    if (state.isRunning) return;
+    _startWithSet(set.containerId, set);
+  }
+
+  void _startWithSet(String containerId, DataSet set) {
     state = CollectionState(
       isRunning: true,
       containerId: containerId,
@@ -185,12 +202,37 @@ class CollectionController extends StateNotifier<CollectionState> {
     if (state.ignoredCues > 0) {
       state = state.copyWith(ignoredCues: 0);
     }
+
+    final currentContainerId = state.containerId;
+    if (value == 10 && currentContainerId != null) {
+      final container = _ref
+          .read(containersProvider)
+          .where((c) => c.id == currentContainerId)
+          .firstOrNull;
+      if (container?.settings.stopMeasurementOnTen == true) {
+        stop();
+      }
+    }
+  }
+
+  DataSet? createReplayCollection(String containerId, String sourceSetId) {
+    if (state.isRunning) return null;
+    final set = DataSet(containerId: containerId, notes: 'Replay of $sourceSetId');
+    _repo.addSet(set);
+    _notifyDataSetChange();
+    return set;
+  }
+
+  void toggleSetStarred(String dataSetId) {
+    _repo.toggleSetStarred(dataSetId);
+    _notifyDataSetChange();
   }
 
   void stop({String? notes}) {
     if (!state.isRunning || state.activeSet == null) return;
     if (notes != null) {
       _repo.updateSet(state.activeSet!.copyWith(notes: notes));
+      _notifyDataSetChange();
     }
     _timer?.cancel();
     _timer = null;
@@ -202,4 +244,9 @@ class CollectionController extends StateNotifier<CollectionState> {
     _timer?.cancel();
     super.dispose();
   }
+}
+
+
+extension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

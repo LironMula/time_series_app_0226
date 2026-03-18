@@ -5,19 +5,31 @@ import 'models.dart';
 import 'providers.dart';
 import 'replay.dart';
 
-class ReplayPage extends ConsumerWidget {
+class ReplayPage extends ConsumerStatefulWidget {
   final String containerId;
 
   const ReplayPage({super.key, required this.containerId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final dataSets = ref.watch(dataSetsProvider(containerId));
+  ConsumerState<ReplayPage> createState() => _ReplayPageState();
+}
+
+class _ReplayPageState extends ConsumerState<ReplayPage> {
+  String? _selectedSourceId;
+  bool _starredOnly = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final allDataSets = ref.watch(dataSetsProvider(widget.containerId));
     final replayState = ref.watch(replayProvider);
     final replayCtrl = ref.read(replayProvider.notifier);
     final collectionState = ref.watch(collectionProvider);
-    final container = ref.watch(containersProvider).firstWhere((c) => c.id == containerId);
+    final collectionCtrl = ref.read(collectionProvider.notifier);
+    final container = ref.watch(containersProvider).firstWhere((c) => c.id == widget.containerId);
     final settings = container.settings;
+
+    final visibleDataSets = _starredOnly ? allDataSets.where((s) => s.starred).toList() : allDataSets;
+    final selectedSource = allDataSets.where((s) => s.id == _selectedSourceId).firstOrNull;
 
     double factorFromSettings(DataSet ds) {
       if (settings.replayStretchMode == ReplayStretchMode.factor) {
@@ -37,33 +49,82 @@ class ReplayPage extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Choose data set to replay:'),
+            Row(
+              children: [
+                const Text('Choose data set to replay:'),
+                const Spacer(),
+                FilterChip(
+                  label: const Text('Starred only'),
+                  selected: _starredOnly,
+                  onSelected: (value) => setState(() => _starredOnly = value),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             DropdownButton<String>(
               isExpanded: true,
-              value: replayState.sourceSet?.id,
+              value: visibleDataSets.any((s) => s.id == _selectedSourceId) ? _selectedSourceId : null,
               hint: const Text('Select data set'),
-              items: dataSets
+              items: visibleDataSets
                   .map((s) => DropdownMenuItem<String>(
                         value: s.id,
-                        child: Text('${s.createdAt.toIso8601String().substring(0, 19)} - ${s.notes}'),
+                        child: Text('${s.starred ? '★ ' : ''}${s.createdAt.toIso8601String().substring(0, 19)} - ${s.notes}'),
                       ))
                   .toList(),
               onChanged: (id) {
-                if (id == null) return;
-                final ds = dataSets.firstWhere((s) => s.id == id);
-                replayCtrl.startReplay(
-                  ds,
-                  stretchFactor: factorFromSettings(ds),
-                  interpolationEnabled: settings.replayInterpolationEnabled,
-                );
+                setState(() {
+                  _selectedSourceId = id;
+                });
               },
+            ),
+            if (selectedSource != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () {
+                    collectionCtrl.toggleSetStarred(selectedSource.id);
+                  },
+                  icon: Icon(selectedSource.starred ? Icons.star : Icons.star_border),
+                  label: Text(selectedSource.starred ? 'Unstar set' : 'Star set'),
+                ),
+              ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: selectedSource == null || collectionState.isRunning
+                      ? null
+                      : () {
+                          final targetSet = collectionCtrl.createReplayCollection(widget.containerId, selectedSource.id);
+                          if (targetSet == null) return;
+                          collectionCtrl.startWithExistingSet(targetSet);
+                          replayCtrl.startReplay(
+                            selectedSource,
+                            stretchFactor: factorFromSettings(selectedSource),
+                            interpolationEnabled: settings.replayInterpolationEnabled,
+                          );
+                        },
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Start replay collection'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: collectionState.isRunning
+                      ? () {
+                          collectionCtrl.stop();
+                          replayCtrl.stop();
+                        }
+                      : null,
+                  icon: const Icon(Icons.stop),
+                  label: const Text('Finish measurement'),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             SwitchListTile(
               value: settings.replayInterpolationEnabled,
               onChanged: (value) => ref.read(containersProvider.notifier).updateSettings(
-                    containerId,
+                    widget.containerId,
                     settings.copyWith(replayInterpolationEnabled: value),
                   ),
               title: const Text('Replay interpolation'),
@@ -79,7 +140,7 @@ class ReplayPage extends ConsumerWidget {
                   onChanged: (value) {
                     if (value == null) return;
                     ref.read(containersProvider.notifier).updateSettings(
-                          containerId,
+                          widget.containerId,
                           settings.copyWith(replayStretchMode: value),
                         );
                   },
@@ -94,7 +155,7 @@ class ReplayPage extends ConsumerWidget {
                 divisions: 15,
                 label: settings.replayStretchFactor.toStringAsFixed(2),
                 onChanged: (v) => ref.read(containersProvider.notifier).updateSettings(
-                      containerId,
+                      widget.containerId,
                       settings.copyWith(replayStretchFactor: v),
                     ),
               )
@@ -112,7 +173,7 @@ class ReplayPage extends ConsumerWidget {
                         final parsed = int.tryParse(v);
                         if (parsed == null || parsed <= 0) return;
                         ref.read(containersProvider.notifier).updateSettings(
-                              containerId,
+                              widget.containerId,
                               settings.copyWith(replayFixedDurationSeconds: parsed),
                             );
                       },
@@ -134,7 +195,7 @@ class ReplayPage extends ConsumerWidget {
             Text(
               collectionState.isRunning
                   ? 'You can collect values while replay is running:'
-                  : 'Start a collection session to collect while replaying.',
+                  : 'Choose a source and press "Start replay collection".',
             ),
             Wrap(
               spacing: 4,
@@ -153,4 +214,8 @@ class ReplayPage extends ConsumerWidget {
       ),
     );
   }
+}
+
+extension<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
