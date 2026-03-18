@@ -178,6 +178,7 @@ class DataSet {
   final DateTime createdAt;
   final DateTime startTime;
   final String notes;
+  final bool starred;
 
   DataSet({
     String? id,
@@ -185,17 +186,19 @@ class DataSet {
     DateTime? createdAt,
     DateTime? startTime,
     this.notes = '',
+    this.starred = false,
   })  : id = id ?? newId(),
         createdAt = createdAt ?? DateTime.now(),
         startTime = startTime ?? DateTime.now();
 
-  DataSet copyWith({String? notes}) {
+  DataSet copyWith({String? notes, bool? starred}) {
     return DataSet(
       id: id,
       containerId: containerId,
       createdAt: createdAt,
       startTime: startTime,
       notes: notes ?? this.notes,
+      starred: starred ?? this.starred,
     );
   }
 
@@ -205,6 +208,7 @@ class DataSet {
         'createdAt': createdAt.toIso8601String(),
         'startTime': startTime.toIso8601String(),
         'notes': notes,
+        'starred': starred,
       };
 
   factory DataSet.fromJson(Map<String, dynamic> json) => DataSet(
@@ -213,6 +217,7 @@ class DataSet {
         createdAt: DateTime.parse(json['createdAt'] as String),
         startTime: DateTime.parse(json['startTime'] as String),
         notes: json['notes'] as String? ?? '',
+        starred: json['starred'] as bool? ?? false,
       );
 }
 
