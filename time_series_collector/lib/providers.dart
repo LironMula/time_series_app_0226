@@ -174,13 +174,20 @@ class CollectionController extends StateNotifier<CollectionState> {
   }
 
   void _startWithSet(String containerId, DataSet set) {
+    _repo.addPoint(
+      DataPoint(
+        dataSetId: set.id,
+        tSeconds: 0,
+        value: 0,
+      ),
+    );
     state = CollectionState(
       isRunning: true,
       containerId: containerId,
       activeSet: set,
       elapsed: Duration.zero,
       ignoredCues: 0,
-      currentValue: null,
+      currentValue: 0,
       isAwaitingNotes: false,
       finishReason: null,
       stopDialogClaimed: false,

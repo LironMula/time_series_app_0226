@@ -280,11 +280,19 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
                 ],
               ),
             const SizedBox(height: 8),
-            if (replayState.isRunning && replayState.nextTarget != null) ...[
+            if (replaySessionActive) ...[
               Text('Mode: ${replayState.sessionLabel}'),
-              Text('Next target value: ${replayState.nextTarget!.value}'),
-              Text('Countdown: ${countdownSeconds!.clamp(0, double.infinity).toStringAsFixed(2)} seconds'),
-            ] else if (replaySessionActive && replayState.isCompleted) ...[
+              Text('Current replay value: ${replayState.currentTarget?.value ?? '—'}'),
+              if (replayState.nextTarget != null) ...[
+                Text('Next replay value: ${replayState.nextTarget!.value}'),
+                Text(
+                  'Next value in: ${countdownSeconds!.clamp(0, double.infinity).toStringAsFixed(2)} seconds',
+                ),
+              ] else ...[
+                const Text('Next replay value: —'),
+              ],
+            ],
+            if (replaySessionActive && replayState.isCompleted) ...[
               Text('${replayState.sessionLabel} playback has ended.'),
               const Text('Measurement is still active until you finish it manually.'),
             ],
