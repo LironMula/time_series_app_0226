@@ -58,6 +58,12 @@ class DataSetRepository {
     if (i != -1) _sets[i] = set;
   }
 
+  void toggleSetStarred(String setId) {
+    final i = _sets.indexWhere((s) => s.id == setId);
+    if (i == -1) return;
+    _sets[i] = _sets[i].copyWith(starred: !_sets[i].starred);
+  }
+
   void removeByContainer(String containerId) {
     final setIds = _sets
         .where((s) => s.containerId == containerId)
@@ -101,6 +107,7 @@ class DataSetRepository {
         createdAt: set.createdAt,
         startTime: set.startTime,
         notes: set.notes,
+        starred: set.starred,
       );
       setIdMap[set.id] = newSet.id;
       _sets.add(newSet);

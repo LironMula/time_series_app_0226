@@ -61,6 +61,10 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
                   value: _interval,
                   items: const [
                     DropdownMenuItem(
+                      value: Duration(minutes: 1),
+                      child: Text('1 min'),
+                    ),
+                    DropdownMenuItem(
                       value: Duration(minutes: 15),
                       child: Text('15 min'),
                     ),
