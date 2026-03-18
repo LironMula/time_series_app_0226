@@ -1,11 +1,11 @@
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'file_saver.dart';
 import 'histogram_page.dart';
 import 'models.dart';
 import 'providers.dart';
@@ -134,18 +134,29 @@ class _ManagementTab extends ConsumerWidget {
         : containers.where((c) => c.id == selectedId).firstOrNull;
 
     Future<void> exportContainerToFile(DataContainer container) async {
-      final location = await getSaveLocation(
-        suggestedName: '${container.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')}.json',
-        acceptedTypeGroups: const [
-          XTypeGroup(label: 'JSON', extensions: ['json']),
-        ],
-      );
-      if (location == null) return;
+      final fileName = '${container.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')}.json';
+      String? savePath;
+      if (!kIsWeb) {
+        final location = await getSaveLocation(
+          suggestedName: fileName,
+          acceptedTypeGroups: const [
+            XTypeGroup(label: 'JSON', extensions: ['json']),
+          ],
+        );
+        if (location == null) return;
+        savePath = location.path;
+      }
       final payload = ref.read(dataSetRepoProvider).exportContainerPayload(container);
-      final file = File(location.path);
-      await file.writeAsString(payload);
+      await saveTextFile(
+        suggestedName: fileName,
+        path: savePath,
+        contents: payload,
+      );
       if (context.mounted) {
-        _showMessage(context, 'Container exported to ${file.path}');
+        _showMessage(
+          context,
+          kIsWeb ? 'Container export downloaded' : 'Container exported to $savePath',
+        );
       }
     }
 
@@ -157,7 +168,7 @@ class _ManagementTab extends ConsumerWidget {
       );
       if (file == null) return;
       try {
-        final payload = await File(file.path).readAsString();
+        final payload = await file.readAsString();
         final imported = ref.read(dataSetRepoProvider).importContainerPayload(payload);
         final newContainer = imported.container.copyWith(
           name: '${imported.container.name} (imported)',
@@ -181,17 +192,29 @@ class _ManagementTab extends ConsumerWidget {
     }
 
     Future<void> exportAllContainersToFile() async {
-      final location = await getSaveLocation(
-        suggestedName: 'containers_export.json',
-        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
-      );
-      if (location == null) return;
+      const fileName = 'containers_export.json';
+      String? savePath;
+      if (!kIsWeb) {
+        final location = await getSaveLocation(
+          suggestedName: fileName,
+          acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+        );
+        if (location == null) return;
+        savePath = location.path;
+      }
       final payload = const JsonEncoder.withIndent('  ').convert({
         'containers': containers.map((c) => jsonDecode(ref.read(dataSetRepoProvider).exportContainerPayload(c))).toList(),
       });
-      await File(location.path).writeAsString(payload);
+      await saveTextFile(
+        suggestedName: fileName,
+        path: savePath,
+        contents: payload,
+      );
       if (context.mounted) {
-        _showMessage(context, 'All containers exported to ${location.path}');
+        _showMessage(
+          context,
+          kIsWeb ? 'Containers export downloaded' : 'All containers exported to $savePath',
+        );
       }
     }
 
@@ -201,7 +224,7 @@ class _ManagementTab extends ConsumerWidget {
       );
       if (file == null) return;
       try {
-        final payload = await File(file.path).readAsString();
+        final payload = await file.readAsString();
         final decoded = jsonDecode(payload) as Map<String, dynamic>;
         final entries = (decoded['containers'] as List?) ?? const [];
         for (final entry in entries) {
