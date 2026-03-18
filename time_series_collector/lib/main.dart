@@ -96,7 +96,7 @@ class _ManagementTab extends ConsumerWidget {
         ? null
         : containers.where((c) => c.id == selectedId).firstOrNull;
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -105,6 +105,7 @@ class _ManagementTab extends ConsumerWidget {
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
+            runSpacing: 8,
             children: [
               ElevatedButton.icon(
                 onPressed: () async {
@@ -141,34 +142,78 @@ class _ManagementTab extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           if (selected != null) ...[
-            Text('Buckets (${selected.name})', style: Theme.of(context).textTheme.titleMedium),
-            ...selected.settings.buckets.map((b) => ListTile(
-                  dense: true,
-                  title: Text('Range ${b.label}'),
-                  trailing: CircleAvatar(radius: 8, backgroundColor: Color(b.color)),
-                )),
-            ElevatedButton(
-              onPressed: () async {
-                final csv = await _askForText(
-                  context,
-                  title: 'Buckets as min-max;color',
-                  initialText: selected.settings.buckets
-                      .map((b) => '${b.minInclusive}-${b.maxInclusive};${b.color.toRadixString(16)}')
-                      .join(','),
-                );
-                if (csv == null || csv.isEmpty) return;
-                final parsed = _parseBucketCsv(csv);
-                if (parsed.isEmpty) return;
-                ref.read(containersProvider.notifier).updateSettings(
-                      selected.id,
-                      selected.settings.copyWith(buckets: parsed),
-                    );
-              },
-              child: const Text('Edit buckets'),
+            Text(
+              'Container properties',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 12),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      value: selected.settings.stopMeasurementOnTen,
+                      onChanged: (value) => ref.read(containersProvider.notifier).updateSettings(
+                            selected.id,
+                            selected.settings.copyWith(stopMeasurementOnTen: value),
+                          ),
+                      title: const Text('Stop measurement if value = 10'),
+                      subtitle: const Text(
+                        'Applies during replay collection when the user taps value 10.',
+                      ),
+                    ),
+                    ExpansionTile(
+                      title: const Text('Histogram bucket configuration'),
+                      subtitle: const Text('Configure the average-time histogram buckets.'),
+                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      children: [
+                        ...selected.settings.buckets.map(
+                          (b) => ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text('Range ${b.label}'),
+                            trailing: CircleAvatar(
+                              radius: 8,
+                              backgroundColor: Color(b.color),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              final csv = await _askForText(
+                                context,
+                                title: 'Buckets as min-max;color',
+                                initialText: selected.settings.buckets
+                                    .map(
+                                      (b) => '${b.minInclusive}-${b.maxInclusive};${b.color.toRadixString(16)}',
+                                    )
+                                    .join(','),
+                              );
+                              if (csv == null || csv.isEmpty) return;
+                              final parsed = _parseBucketCsv(csv);
+                              if (parsed.isEmpty) return;
+                              ref.read(containersProvider.notifier).updateSettings(
+                                    selected.id,
+                                    selected.settings.copyWith(buckets: parsed),
+                                  );
+                            },
+                            child: const Text('Edit buckets'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
             ),
             const Divider(),
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: [
                 ElevatedButton(
                   onPressed: () {

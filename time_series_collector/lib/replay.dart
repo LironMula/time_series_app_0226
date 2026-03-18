@@ -8,6 +8,7 @@ import 'repositories.dart';
 
 class ReplayState {
   final bool isRunning;
+  final bool isCompleted;
   final DataSet? sourceSet;
   final Duration elapsed;
   final DataPoint? nextTarget;
@@ -16,6 +17,7 @@ class ReplayState {
 
   const ReplayState({
     required this.isRunning,
+    required this.isCompleted,
     this.sourceSet,
     this.elapsed = Duration.zero,
     this.nextTarget,
@@ -25,6 +27,7 @@ class ReplayState {
 
   ReplayState copyWith({
     bool? isRunning,
+    bool? isCompleted,
     DataSet? sourceSet,
     Duration? elapsed,
     DataPoint? nextTarget,
@@ -33,15 +36,16 @@ class ReplayState {
   }) {
     return ReplayState(
       isRunning: isRunning ?? this.isRunning,
+      isCompleted: isCompleted ?? this.isCompleted,
       sourceSet: sourceSet ?? this.sourceSet,
       elapsed: elapsed ?? this.elapsed,
-      nextTarget: nextTarget ?? this.nextTarget,
+      nextTarget: nextTarget,
       stretchFactor: stretchFactor ?? this.stretchFactor,
       interpolationEnabled: interpolationEnabled ?? this.interpolationEnabled,
     );
   }
 
-  factory ReplayState.initial() => const ReplayState(isRunning: false);
+  factory ReplayState.initial() => const ReplayState(isRunning: false, isCompleted: false);
 }
 
 final replayProvider = StateNotifierProvider<ReplayController, ReplayState>((ref) {
@@ -70,6 +74,7 @@ class ReplayController extends StateNotifier<ReplayState> {
 
     state = ReplayState(
       isRunning: true,
+      isCompleted: false,
       sourceSet: source,
       elapsed: Duration.zero,
       nextTarget: _points.first,
@@ -88,16 +93,28 @@ class ReplayController extends StateNotifier<ReplayState> {
     final newElapsed = state.elapsed + const Duration(milliseconds: 200);
     final stretchedTime = (newElapsed.inMilliseconds / 1000.0) / state.stretchFactor;
 
+    if (stretchedTime >= _points.last.tSeconds) {
+      _timer?.cancel();
+      _timer = null;
+      state = state.copyWith(
+        elapsed: newElapsed,
+        isRunning: false,
+        isCompleted: true,
+        nextTarget: null,
+      );
+      return;
+    }
+
     final next = _points.firstWhere(
       (p) => p.tSeconds >= stretchedTime,
       orElse: () => _points.last,
     );
 
-    state = state.copyWith(elapsed: newElapsed, nextTarget: next);
-
-    if (stretchedTime >= _points.last.tSeconds) {
-      stop();
-    }
+    state = state.copyWith(
+      elapsed: newElapsed,
+      nextTarget: next,
+      isCompleted: false,
+    );
   }
 
   List<DataPoint> _interpolate(List<DataPoint> source) {
@@ -129,6 +146,7 @@ class ReplayController extends StateNotifier<ReplayState> {
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _points = [];
     state = ReplayState.initial();
   }
 
