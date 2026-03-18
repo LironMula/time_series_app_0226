@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -115,14 +117,27 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
             Expanded(
               child: results.isEmpty
                   ? const Center(
-                      child:
-                          Text('No data in selected period/interval'),
+                      child: Text('No data in selected period/interval'),
                     )
-                  : BarChart(
-                      _buildBarChartData(
-                        buckets: buckets,
-                        results: results,
-                      ),
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final chartWidth = math.max(
+                          constraints.maxWidth,
+                          results.length * 28.0,
+                        );
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SizedBox(
+                            width: chartWidth,
+                            child: BarChart(
+                              _buildBarChartData(
+                                buckets: buckets,
+                                results: results,
+                              ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
             ),
           ],
@@ -168,8 +183,12 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
       );
     }
 
+    final titleStep = math.max(1, (results.length / 10).ceil());
+
     return BarChartData(
       barGroups: groups,
+      alignment: BarChartAlignment.start,
+      groupsSpace: 6,
       titlesData: FlTitlesData(
         leftTitles: const AxisTitles(
           sideTitles: SideTitles(showTitles: true),
@@ -183,9 +202,10 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
         bottomTitles: AxisTitles(
           sideTitles: SideTitles(
             showTitles: true,
+            reservedSize: 28,
             getTitlesWidget: (value, meta) {
               final index = value.toInt();
-              if (index < 0 || index >= results.length) {
+              if (index < 0 || index >= results.length || index % titleStep != 0) {
                 return const SizedBox.shrink();
               }
               final t = results[index].intervalStart;
