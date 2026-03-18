@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,11 +9,44 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'histogram_page.dart';
 import 'models.dart';
 import 'providers.dart';
+import 'replay.dart';
 import 'replay_page.dart';
 import 'visualization_page.dart';
 
 void main() {
   runApp(const ProviderScope(child: TimeSeriesApp()));
+}
+
+void _showMessage(BuildContext context, String text) {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+}
+
+Future<void> _showPendingStopDialog(
+  BuildContext context,
+  WidgetRef ref,
+  CollectionState state,
+) async {
+  if (!state.isAwaitingNotes || state.activeSet == null) return;
+
+  final title = switch (state.finishReason) {
+    MeasurementFinishReason.stopAtTen => 'Measurement finished at value 10',
+    MeasurementFinishReason.ignoredReminders => 'Measurement ended after ignored reminders',
+    _ => 'Finish measurement',
+  };
+
+  final subtitle = switch (state.finishReason) {
+    MeasurementFinishReason.stopAtTen => 'Value 10 was recorded and the measurement has ended.',
+    MeasurementFinishReason.ignoredReminders =>
+      'Three consecutive reminders were ignored. You can still add notes now.',
+    _ => 'Add optional notes for the finished measurement.',
+  };
+
+  final notes = await _askForText(
+    context,
+    title: title,
+    helperText: subtitle,
+  );
+  ref.read(collectionProvider.notifier).finalizeStop(notes: notes);
 }
 
 class TimeSeriesApp extends StatelessWidget {
@@ -76,7 +113,7 @@ class _ContainerSelector extends ConsumerWidget {
       hint: const Text('Select container'),
       isExpanded: true,
       items: containers
-          .map((c) => DropdownMenuItem(value: c.id, child: Text(c.name)))
+          .map((c) => DropdownMenuItem(value: c.id, child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis)))
           .toList(),
       onChanged: (value) =>
           ref.read(selectedContainerIdProvider.notifier).state = value,
@@ -96,6 +133,103 @@ class _ManagementTab extends ConsumerWidget {
         ? null
         : containers.where((c) => c.id == selectedId).firstOrNull;
 
+    Future<void> exportContainerToFile(DataContainer container) async {
+      final location = await getSaveLocation(
+        suggestedName: '${container.name.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_')}.json',
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
+      );
+      if (location == null) return;
+      final payload = ref.read(dataSetRepoProvider).exportContainerPayload(container);
+      final file = File(location.path);
+      await file.writeAsString(payload);
+      if (context.mounted) {
+        _showMessage(context, 'Container exported to ${file.path}');
+      }
+    }
+
+    Future<void> importContainerFromFile() async {
+      final file = await openFile(
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'JSON', extensions: ['json']),
+        ],
+      );
+      if (file == null) return;
+      try {
+        final payload = await File(file.path).readAsString();
+        final imported = ref.read(dataSetRepoProvider).importContainerPayload(payload);
+        final newContainer = imported.container.copyWith(
+          name: '${imported.container.name} (imported)',
+        );
+        ref.read(containersProvider.notifier).create(
+              newContainer.name,
+              settings: newContainer.settings,
+            );
+        final actual = ref.read(containersProvider).last;
+        ref.read(dataSetRepoProvider).mergeImported(imported, newContainerId: actual.id);
+        ref.read(dataSetRefreshProvider.notifier).state++;
+        ref.read(selectedContainerIdProvider.notifier).state = actual.id;
+        if (context.mounted) {
+          _showMessage(context, 'Imported container from ${file.name}');
+        }
+      } catch (_) {
+        if (context.mounted) {
+          _showMessage(context, 'Invalid import file');
+        }
+      }
+    }
+
+    Future<void> exportAllContainersToFile() async {
+      final location = await getSaveLocation(
+        suggestedName: 'containers_export.json',
+        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+      );
+      if (location == null) return;
+      final payload = const JsonEncoder.withIndent('  ').convert({
+        'containers': containers.map((c) => jsonDecode(ref.read(dataSetRepoProvider).exportContainerPayload(c))).toList(),
+      });
+      await File(location.path).writeAsString(payload);
+      if (context.mounted) {
+        _showMessage(context, 'All containers exported to ${location.path}');
+      }
+    }
+
+    Future<void> importAllContainersFromFile() async {
+      final file = await openFile(
+        acceptedTypeGroups: const [XTypeGroup(label: 'JSON', extensions: ['json'])],
+      );
+      if (file == null) return;
+      try {
+        final payload = await File(file.path).readAsString();
+        final decoded = jsonDecode(payload) as Map<String, dynamic>;
+        final entries = (decoded['containers'] as List?) ?? const [];
+        for (final entry in entries) {
+          final imported = ref
+              .read(dataSetRepoProvider)
+              .importContainerPayload(jsonEncode(entry));
+          final newContainer = imported.container.copyWith(
+            name: '${imported.container.name} (imported)',
+          );
+          ref.read(containersProvider.notifier).create(
+                newContainer.name,
+                settings: newContainer.settings,
+              );
+          final actual = ref.read(containersProvider).last;
+          ref.read(dataSetRepoProvider).mergeImported(imported, newContainerId: actual.id);
+          ref.read(selectedContainerIdProvider.notifier).state = actual.id;
+        }
+        ref.read(dataSetRefreshProvider.notifier).state++;
+        if (context.mounted) {
+          _showMessage(context, 'Imported ${entries.length} container(s) from file');
+        }
+      } catch (_) {
+        if (context.mounted) {
+          _showMessage(context, 'Invalid containers import file');
+        }
+      }
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -109,7 +243,12 @@ class _ManagementTab extends ConsumerWidget {
             children: [
               ElevatedButton.icon(
                 onPressed: () async {
-                  final name = await _askForText(context, title: 'New container');
+                  final name = await _askForText(
+                    context,
+                    title: 'New container',
+                    singleLine: true,
+                    submitLabel: 'Create',
+                  );
                   if (name == null || name.trim().isEmpty) return;
                   ref.read(containersProvider.notifier).create(name.trim());
                 },
@@ -124,6 +263,8 @@ class _ManagementTab extends ConsumerWidget {
                           context,
                           title: 'Rename container',
                           initialText: selected.name,
+                          singleLine: true,
+                          submitLabel: 'Rename',
                         );
                         if (name == null || name.trim().isEmpty) return;
                         ref.read(containersProvider.notifier).rename(selected.id, name.trim());
@@ -137,6 +278,16 @@ class _ManagementTab extends ConsumerWidget {
                     : () => ref.read(containersProvider.notifier).remove(selected.id),
                 icon: const Icon(Icons.delete),
                 label: const Text('Delete'),
+              ),
+              ElevatedButton.icon(
+                onPressed: exportAllContainersToFile,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Export all'),
+              ),
+              ElevatedButton.icon(
+                onPressed: importAllContainersFromFile,
+                icon: const Icon(Icons.download),
+                label: const Text('Import all'),
               ),
             ],
           ),
@@ -160,7 +311,7 @@ class _ManagementTab extends ConsumerWidget {
                           ),
                       title: const Text('Stop measurement if value = 10'),
                       subtitle: const Text(
-                        'Applies during replay collection when the user taps value 10.',
+                        'Applies to all measurement modes. Value 10 is saved first, then the measurement ends.',
                       ),
                     ),
                     ExpansionTile(
@@ -219,11 +370,17 @@ class _ManagementTab extends ConsumerWidget {
                   onPressed: () {
                     final payload = ref.read(dataSetRepoProvider).exportContainerPayload(selected);
                     Clipboard.setData(ClipboardData(text: payload));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Export copied to clipboard')),
-                    );
+                    _showMessage(context, 'Export copied to clipboard');
                   },
-                  child: const Text('Export container'),
+                  child: const Text('Copy export JSON'),
+                ),
+                ElevatedButton(
+                  onPressed: () => exportContainerToFile(selected),
+                  child: const Text('Export container to file'),
+                ),
+                ElevatedButton(
+                  onPressed: importContainerFromFile,
+                  child: const Text('Import container from file'),
                 ),
                 ElevatedButton(
                   onPressed: () async {
@@ -242,18 +399,16 @@ class _ManagementTab extends ConsumerWidget {
                             settings: newContainer.settings,
                           );
                       final actual = ref.read(containersProvider).last;
-                      ref
-                          .read(dataSetRepoProvider)
-                          .mergeImported(imported, newContainerId: actual.id);
+                      ref.read(dataSetRepoProvider).mergeImported(imported, newContainerId: actual.id);
+                      ref.read(dataSetRefreshProvider.notifier).state++;
+                      ref.read(selectedContainerIdProvider.notifier).state = actual.id;
                     } catch (_) {
                       if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Invalid import payload')),
-                        );
+                        _showMessage(context, 'Invalid import payload');
                       }
                     }
                   },
-                  child: const Text('Import container'),
+                  child: const Text('Import from pasted JSON'),
                 ),
               ],
             ),
@@ -281,16 +436,39 @@ class _ManagementTab extends ConsumerWidget {
   }
 }
 
-class _CollectionTab extends ConsumerWidget {
+class _CollectionTab extends ConsumerStatefulWidget {
   final String? selectedId;
 
   const _CollectionTab({required this.selectedId});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CollectionTab> createState() => _CollectionTabState();
+}
+
+class _CollectionTabState extends ConsumerState<_CollectionTab> {
+  bool _showingPendingStopDialog = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.listenManual<CollectionState>(collectionProvider, (previous, next) async {
+      if (!mounted || _showingPendingStopDialog || !next.isAwaitingNotes) return;
+      _showingPendingStopDialog = true;
+      await _showPendingStopDialog(context, ref, next);
+      _showingPendingStopDialog = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = widget.selectedId;
     if (selectedId == null) return const Center(child: Text('Select a container in management tab'));
     final collectionState = ref.watch(collectionProvider);
     final container = ref.watch(containersProvider).firstWhere((c) => c.id == selectedId);
+
+    Future<void> stopCollectionManually() async {
+      ref.read(collectionProvider.notifier).requestStop(MeasurementFinishReason.manual);
+    }
 
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -303,7 +481,7 @@ class _CollectionTab extends ConsumerWidget {
             spacing: 8,
             children: [
               ElevatedButton(
-                onPressed: collectionState.isRunning
+                onPressed: collectionState.isRunning || collectionState.isAwaitingNotes
                     ? null
                     : () async {
                         final config = await showDialog<CollectionStartConfig>(
@@ -311,39 +489,45 @@ class _CollectionTab extends ConsumerWidget {
                           builder: (_) => _CollectionConfigDialog(settings: container.settings),
                         );
                         if (config == null) return;
-                        ref.read(collectionProvider.notifier).applyStartConfig(selectedId!, config);
-                        ref.read(collectionProvider.notifier).start(selectedId!);
+                        ref.read(collectionProvider.notifier).applyStartConfig(selectedId, config);
+                        ref.read(collectionProvider.notifier).start(selectedId);
                       },
                 child: const Text('Start collection'),
               ),
               ElevatedButton(
-                onPressed: collectionState.isRunning
-                    ? () async {
-                        final notes = await _askForText(context, title: 'Notes');
-                        ref.read(collectionProvider.notifier).stop(notes: notes);
-                      }
-                    : null,
+                onPressed: collectionState.isRunning ? stopCollectionManually : null,
                 child: const Text('Stop collection'),
               ),
               ElevatedButton(
                 onPressed: () => Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => ReplayPage(containerId: selectedId!)),
+                  MaterialPageRoute(builder: (_) => ReplayPage(containerId: selectedId)),
                 ),
                 child: const Text('Replay mode'),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          if (collectionState.isRunning) ...[
-            Text('Elapsed: ${collectionState.elapsed.inSeconds}s | ignored cues: ${collectionState.ignoredCues}'),
+          if (collectionState.isRunning || collectionState.isAwaitingNotes) ...[
+            Text(
+              'Elapsed: ${collectionState.elapsed.inSeconds}s | ignored cues: ${collectionState.ignoredCues}',
+            ),
+            const SizedBox(height: 4),
+            Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
+            if (container.settings.stopMeasurementOnTen)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text('Tapping value 10 records the point and ends the measurement.'),
+              ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
               children: List.generate(
                 11,
                 (i) => ElevatedButton(
-                  onPressed: () => ref.read(collectionProvider.notifier).tapValue(i),
+                  onPressed: collectionState.isRunning
+                      ? () => ref.read(collectionProvider.notifier).tapValue(i)
+                      : null,
                   child: Text('$i'),
                 ),
               ),
@@ -528,6 +712,9 @@ Future<String?> _askForText(
   BuildContext context, {
   required String title,
   String? initialText,
+  bool singleLine = false,
+  String? helperText,
+  String submitLabel = 'OK',
 }) {
   final controller = TextEditingController(text: initialText);
   return showDialog<String>(
@@ -535,10 +722,16 @@ Future<String?> _askForText(
     builder: (context) {
       return AlertDialog(
         title: Text(title),
-        content: TextField(controller: controller, maxLines: null),
+        content: TextField(
+          controller: controller,
+          maxLines: singleLine ? 1 : null,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => Navigator.pop(context, controller.text),
+          decoration: InputDecoration(helperText: helperText),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('OK')),
+          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: Text(submitLabel)),
         ],
       );
     },

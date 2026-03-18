@@ -14,6 +14,7 @@ class ReplayState {
   final DataPoint? nextTarget;
   final double stretchFactor;
   final bool interpolationEnabled;
+  final String sessionLabel;
 
   const ReplayState({
     required this.isRunning,
@@ -23,6 +24,7 @@ class ReplayState {
     this.nextTarget,
     this.stretchFactor = 1.0,
     this.interpolationEnabled = false,
+    this.sessionLabel = 'Replay measurement',
   });
 
   ReplayState copyWith({
@@ -33,6 +35,7 @@ class ReplayState {
     DataPoint? nextTarget,
     double? stretchFactor,
     bool? interpolationEnabled,
+    String? sessionLabel,
   }) {
     return ReplayState(
       isRunning: isRunning ?? this.isRunning,
@@ -42,6 +45,7 @@ class ReplayState {
       nextTarget: nextTarget,
       stretchFactor: stretchFactor ?? this.stretchFactor,
       interpolationEnabled: interpolationEnabled ?? this.interpolationEnabled,
+      sessionLabel: sessionLabel ?? this.sessionLabel,
     );
   }
 
@@ -64,29 +68,47 @@ class ReplayController extends StateNotifier<ReplayState> {
     DataSet source, {
     required double stretchFactor,
     required bool interpolationEnabled,
+    String? sessionLabel,
+  }) {
+    final rawPoints = _repo.getPoints(source.id);
+    startReplayFromPoints(
+      rawPoints,
+      sourceSet: source,
+      stretchFactor: stretchFactor,
+      interpolationEnabled: interpolationEnabled,
+      sessionLabel: sessionLabel ?? 'Replay measurement',
+    );
+  }
+
+  void startReplayFromPoints(
+    List<DataPoint> rawPoints, {
+    DataSet? sourceSet,
+    required double stretchFactor,
+    required bool interpolationEnabled,
+    required String sessionLabel,
   }) {
     if (state.isRunning) stop();
-    final rawPoints = _repo.getPoints(source.id);
     if (rawPoints.isEmpty) return;
 
-    _points = interpolationEnabled ? _interpolate(rawPoints) : rawPoints;
+    _points = interpolationEnabled ? _interpolate(rawPoints) : List<DataPoint>.from(rawPoints);
     _points.sort((a, b) => a.tSeconds.compareTo(b.tSeconds));
 
     state = ReplayState(
       isRunning: true,
       isCompleted: false,
-      sourceSet: source,
+      sourceSet: sourceSet,
       elapsed: Duration.zero,
       nextTarget: _points.first,
       stretchFactor: stretchFactor,
       interpolationEnabled: interpolationEnabled,
+      sessionLabel: sessionLabel,
     );
 
     _timer = Timer.periodic(const Duration(milliseconds: 200), _onTick);
   }
 
   void _onTick(Timer t) {
-    if (!state.isRunning || state.sourceSet == null || _points.isEmpty) {
+    if (!state.isRunning || _points.isEmpty) {
       return;
     }
 
