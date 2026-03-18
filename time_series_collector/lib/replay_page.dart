@@ -64,6 +64,7 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
     super.initState();
     ref.listenManual<CollectionState>(collectionProvider, (previous, next) async {
       if (!mounted || _showingPendingStopDialog || !next.isAwaitingNotes) return;
+      if (!ref.read(collectionProvider.notifier).claimPendingStopDialog()) return;
       _showingPendingStopDialog = true;
       await _showReplayPendingStopDialog(context, ref, next);
       ref.read(replayProvider.notifier).stop();

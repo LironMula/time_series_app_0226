@@ -98,6 +98,7 @@ class CollectionState {
   final int? currentValue;
   final bool isAwaitingNotes;
   final MeasurementFinishReason? finishReason;
+  final bool stopDialogClaimed;
 
   const CollectionState({
     required this.isRunning,
@@ -108,6 +109,7 @@ class CollectionState {
     this.currentValue,
     this.isAwaitingNotes = false,
     this.finishReason,
+    this.stopDialogClaimed = false,
   });
 
   CollectionState copyWith({
@@ -121,6 +123,7 @@ class CollectionState {
     bool? isAwaitingNotes,
     MeasurementFinishReason? finishReason,
     bool clearFinishReason = false,
+    bool? stopDialogClaimed,
   }) {
     return CollectionState(
       isRunning: isRunning ?? this.isRunning,
@@ -131,6 +134,7 @@ class CollectionState {
       currentValue: clearCurrentValue ? null : (currentValue ?? this.currentValue),
       isAwaitingNotes: isAwaitingNotes ?? this.isAwaitingNotes,
       finishReason: clearFinishReason ? null : (finishReason ?? this.finishReason),
+      stopDialogClaimed: stopDialogClaimed ?? this.stopDialogClaimed,
     );
   }
 
@@ -179,6 +183,7 @@ class CollectionController extends StateNotifier<CollectionState> {
       currentValue: null,
       isAwaitingNotes: false,
       finishReason: null,
+      stopDialogClaimed: false,
     );
     _sinceLastPoint = Duration.zero;
     _timer = Timer.periodic(const Duration(seconds: 1), _onTick);
@@ -320,7 +325,15 @@ class CollectionController extends StateNotifier<CollectionState> {
       isRunning: false,
       isAwaitingNotes: true,
       finishReason: reason,
+      stopDialogClaimed: false,
     );
+  }
+
+
+  bool claimPendingStopDialog() {
+    if (!state.isAwaitingNotes || state.stopDialogClaimed) return false;
+    state = state.copyWith(stopDialogClaimed: true);
+    return true;
   }
 
   void toggleSetStarred(String dataSetId) {
