@@ -11,18 +11,22 @@ class ReplayState {
   final bool isCompleted;
   final DataSet? sourceSet;
   final Duration elapsed;
+  final DataPoint? currentTarget;
   final DataPoint? nextTarget;
   final double stretchFactor;
   final bool interpolationEnabled;
+  final String sessionLabel;
 
   const ReplayState({
     required this.isRunning,
     required this.isCompleted,
     this.sourceSet,
     this.elapsed = Duration.zero,
+    this.currentTarget,
     this.nextTarget,
     this.stretchFactor = 1.0,
     this.interpolationEnabled = false,
+    this.sessionLabel = 'Replay measurement',
   });
 
   ReplayState copyWith({
@@ -30,18 +34,24 @@ class ReplayState {
     bool? isCompleted,
     DataSet? sourceSet,
     Duration? elapsed,
+    DataPoint? currentTarget,
+    bool clearCurrentTarget = false,
     DataPoint? nextTarget,
+    bool clearNextTarget = false,
     double? stretchFactor,
     bool? interpolationEnabled,
+    String? sessionLabel,
   }) {
     return ReplayState(
       isRunning: isRunning ?? this.isRunning,
       isCompleted: isCompleted ?? this.isCompleted,
       sourceSet: sourceSet ?? this.sourceSet,
       elapsed: elapsed ?? this.elapsed,
-      nextTarget: nextTarget,
+      currentTarget: clearCurrentTarget ? null : (currentTarget ?? this.currentTarget),
+      nextTarget: clearNextTarget ? null : (nextTarget ?? this.nextTarget),
       stretchFactor: stretchFactor ?? this.stretchFactor,
       interpolationEnabled: interpolationEnabled ?? this.interpolationEnabled,
+      sessionLabel: sessionLabel ?? this.sessionLabel,
     );
   }
 
@@ -64,29 +74,70 @@ class ReplayController extends StateNotifier<ReplayState> {
     DataSet source, {
     required double stretchFactor,
     required bool interpolationEnabled,
+    String? sessionLabel,
+  }) {
+    final rawPoints = _repo.getPoints(source.id);
+    startReplayFromPoints(
+      rawPoints,
+      sourceSet: source,
+      stretchFactor: stretchFactor,
+      interpolationEnabled: interpolationEnabled,
+      sessionLabel: sessionLabel ?? 'Replay measurement',
+    );
+  }
+
+  void startReplayFromPoints(
+    List<DataPoint> rawPoints, {
+    DataSet? sourceSet,
+    required double stretchFactor,
+    required bool interpolationEnabled,
+    required String sessionLabel,
   }) {
     if (state.isRunning) stop();
-    final rawPoints = _repo.getPoints(source.id);
     if (rawPoints.isEmpty) return;
 
-    _points = interpolationEnabled ? _interpolate(rawPoints) : rawPoints;
+    _points = interpolationEnabled ? _interpolate(rawPoints) : List<DataPoint>.from(rawPoints);
     _points.sort((a, b) => a.tSeconds.compareTo(b.tSeconds));
+    final current = _currentPointFor(0);
+    final next = _nextPointAfter(0);
 
     state = ReplayState(
       isRunning: true,
       isCompleted: false,
-      sourceSet: source,
+      sourceSet: sourceSet,
       elapsed: Duration.zero,
-      nextTarget: _points.first,
+      currentTarget: current,
+      nextTarget: next,
       stretchFactor: stretchFactor,
       interpolationEnabled: interpolationEnabled,
+      sessionLabel: sessionLabel,
     );
 
     _timer = Timer.periodic(const Duration(milliseconds: 200), _onTick);
   }
 
+  DataPoint _currentPointFor(double stretchedTimeSeconds) {
+    var current = _points.first;
+    for (final point in _points) {
+      if (point.tSeconds > stretchedTimeSeconds) {
+        break;
+      }
+      current = point;
+    }
+    return current;
+  }
+
+  DataPoint? _nextPointAfter(double stretchedTimeSeconds) {
+    for (final point in _points) {
+      if (point.tSeconds > stretchedTimeSeconds) {
+        return point;
+      }
+    }
+    return null;
+  }
+
   void _onTick(Timer t) {
-    if (!state.isRunning || state.sourceSet == null || _points.isEmpty) {
+    if (!state.isRunning || _points.isEmpty) {
       return;
     }
 
@@ -98,21 +149,18 @@ class ReplayController extends StateNotifier<ReplayState> {
       _timer = null;
       state = state.copyWith(
         elapsed: newElapsed,
+        currentTarget: _points.last,
         isRunning: false,
         isCompleted: true,
-        nextTarget: null,
+        clearNextTarget: true,
       );
       return;
     }
 
-    final next = _points.firstWhere(
-      (p) => p.tSeconds >= stretchedTime,
-      orElse: () => _points.last,
-    );
-
     state = state.copyWith(
       elapsed: newElapsed,
-      nextTarget: next,
+      currentTarget: _currentPointFor(stretchedTime),
+      nextTarget: _nextPointAfter(stretchedTime),
       isCompleted: false,
     );
   }
