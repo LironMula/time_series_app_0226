@@ -30,6 +30,8 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
 
     final visibleDataSets = _starredOnly ? allDataSets.where((s) => s.starred).toList() : allDataSets;
     final selectedSource = allDataSets.where((s) => s.id == _selectedSourceId).firstOrNull;
+    final replaySessionActive = replayState.sourceSet != null &&
+        (replayState.isRunning || replayState.isCompleted || replayState.nextTarget != null);
 
     double factorFromSettings(DataSet ds) {
       if (settings.replayStretchMode == ReplayStretchMode.factor) {
@@ -42,17 +44,37 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
       return settings.replayFixedDurationSeconds / sourceDuration;
     }
 
+    Future<void> finishReplayMeasurement() async {
+      final notes = await _askForReplayNotes(context);
+      if (!mounted || notes == null) return;
+      collectionCtrl.stop(notes: notes);
+      replayCtrl.stop();
+    }
+
+    void finishReplayMeasurementImmediately() {
+      collectionCtrl.stop();
+      replayCtrl.stop();
+    }
+
+    void handleReplayValueTap(int value) {
+      if (!collectionState.isRunning) return;
+      collectionCtrl.tapValue(value);
+      if (value == 10 && settings.stopMeasurementOnTen) {
+        finishReplayMeasurementImmediately();
+      }
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Replay')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Text('Choose data set to replay:'),
-                const Spacer(),
+                const Expanded(child: Text('Choose data set to replay:')),
+                const SizedBox(width: 8),
                 FilterChip(
                   label: const Text('Starred only'),
                   selected: _starredOnly,
@@ -81,30 +103,38 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton.icon(
-                  onPressed: () {
-                    collectionCtrl.toggleSetStarred(selectedSource.id);
-                    setState(() {});
-                  },
+                  onPressed: () => collectionCtrl.toggleSetStarred(selectedSource.id),
                   icon: Icon(selectedSource.starred ? Icons.star : Icons.star_border),
                   label: Text(selectedSource.starred ? 'Unstar set' : 'Star set'),
                 ),
               ),
             const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: selectedSource == null || collectionState.isRunning
-                  ? null
-                  : () {
-                      final targetSet = collectionCtrl.createReplayCollection(widget.containerId, selectedSource.id);
-                      if (targetSet == null) return;
-                      collectionCtrl.startWithExistingSet(targetSet);
-                      replayCtrl.startReplay(
-                        selectedSource,
-                        stretchFactor: factorFromSettings(selectedSource),
-                        interpolationEnabled: settings.replayInterpolationEnabled,
-                      );
-                    },
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Start replay collection'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: selectedSource == null || collectionState.isRunning
+                      ? null
+                      : () {
+                          final targetSet = collectionCtrl.createReplayCollection(widget.containerId, selectedSource.id);
+                          if (targetSet == null) return;
+                          collectionCtrl.startWithExistingSet(targetSet);
+                          replayCtrl.startReplay(
+                            selectedSource,
+                            stretchFactor: factorFromSettings(selectedSource),
+                            interpolationEnabled: settings.replayInterpolationEnabled,
+                          );
+                        },
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Start replay collection'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: collectionState.isRunning ? finishReplayMeasurement : null,
+                  icon: const Icon(Icons.stop),
+                  label: const Text('Finish measurement'),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
             SwitchListTile(
@@ -176,21 +206,26 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
                 final dt = replayState.nextTarget!.tSeconds - stretchedTime;
                 return Text('Countdown: ${dt.toStringAsFixed(2)} seconds');
               }),
+            ] else if (replaySessionActive && replayState.isCompleted) ...[
+              const Text('Replay playback has ended.'),
+              const Text('Measurement is still active until you finish it manually.'),
             ],
             const Divider(),
             Text(
               collectionState.isRunning
-                  ? 'You can collect values while replay is running:'
+                  ? 'You can collect values while replay is running or after playback ends:'
                   : 'Choose a source and press "Start replay collection".',
             ),
+            const SizedBox(height: 8),
+            if (settings.stopMeasurementOnTen)
+              const Text('Tapping value 10 will finish the active replay measurement.'),
             Wrap(
               spacing: 4,
+              runSpacing: 4,
               children: List.generate(
                 11,
                 (i) => ElevatedButton(
-                  onPressed: collectionState.isRunning
-                      ? () => ref.read(collectionProvider.notifier).tapValue(i)
-                      : null,
+                  onPressed: collectionState.isRunning ? () => handleReplayValueTap(i) : null,
                   child: Text('$i'),
                 ),
               ),
@@ -200,6 +235,33 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
       ),
     );
   }
+}
+
+Future<String?> _askForReplayNotes(BuildContext context) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('Finish measurement'),
+        content: TextField(
+          controller: controller,
+          maxLines: null,
+          decoration: const InputDecoration(hintText: 'Optional notes'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('Finish'),
+          ),
+        ],
+      );
+    },
+  );
 }
 
 extension<T> on Iterable<T> {
