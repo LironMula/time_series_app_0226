@@ -5,6 +5,46 @@ import 'models.dart';
 import 'providers.dart';
 import 'replay.dart';
 
+
+Future<void> _showReplayPendingStopDialog(
+  BuildContext context,
+  WidgetRef ref,
+  CollectionState state,
+) async {
+  final title = switch (state.finishReason) {
+    MeasurementFinishReason.stopAtTen => 'Measurement finished at value 10',
+    MeasurementFinishReason.ignoredReminders => 'Measurement ended after ignored reminders',
+    _ => 'Finish measurement',
+  };
+
+  final subtitle = switch (state.finishReason) {
+    MeasurementFinishReason.stopAtTen => 'Value 10 was recorded and the measurement has ended.',
+    MeasurementFinishReason.ignoredReminders =>
+      'Three consecutive reminders were ignored. You can still add notes now.',
+    _ => 'Add optional notes for the finished measurement.',
+  };
+
+  final controller = TextEditingController();
+  final notes = await showDialog<String>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: controller,
+        maxLines: null,
+        decoration: InputDecoration(helperText: subtitle),
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => Navigator.pop(context, controller.text),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Skip')),
+        TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text('Save')),
+      ],
+    ),
+  );
+  ref.read(collectionProvider.notifier).finalizeStop(notes: notes);
+}
+
 class ReplayPage extends ConsumerStatefulWidget {
   final String containerId;
 
@@ -17,6 +57,20 @@ class ReplayPage extends ConsumerStatefulWidget {
 class _ReplayPageState extends ConsumerState<ReplayPage> {
   String? _selectedSourceId;
   bool _starredOnly = false;
+  bool _showingPendingStopDialog = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.listenManual<CollectionState>(collectionProvider, (previous, next) async {
+      if (!mounted || _showingPendingStopDialog || !next.isAwaitingNotes) return;
+      if (!ref.read(collectionProvider.notifier).claimPendingStopDialog()) return;
+      _showingPendingStopDialog = true;
+      await _showReplayPendingStopDialog(context, ref, next);
+      ref.read(replayProvider.notifier).stop();
+      _showingPendingStopDialog = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,8 +84,7 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
 
     final visibleDataSets = _starredOnly ? allDataSets.where((s) => s.starred).toList() : allDataSets;
     final selectedSource = allDataSets.where((s) => s.id == _selectedSourceId).firstOrNull;
-    final replaySessionActive = replayState.sourceSet != null &&
-        (replayState.isRunning || replayState.isCompleted || replayState.nextTarget != null);
+    final replaySessionActive = replayState.isRunning || replayState.isCompleted || replayState.nextTarget != null;
 
     double factorFromSettings(DataSet ds) {
       if (settings.replayStretchMode == ReplayStretchMode.factor) {
@@ -44,25 +97,53 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
       return settings.replayFixedDurationSeconds / sourceDuration;
     }
 
-    Future<void> finishReplayMeasurement() async {
-      final notes = await _askForReplayNotes(context);
-      if (!mounted || notes == null) return;
-      collectionCtrl.stop(notes: notes);
-      replayCtrl.stop();
+    List<DataPoint> buildDefaultReplayPoints(Duration duration) {
+      final totalSeconds = duration.inMilliseconds / 1000.0;
+      return List.generate(
+        11,
+        (index) => DataPoint(
+          dataSetId: 'default-replay',
+          tSeconds: totalSeconds * (index / 10),
+          value: index,
+        ),
+      );
     }
 
-    void finishReplayMeasurementImmediately() {
-      collectionCtrl.stop();
-      replayCtrl.stop();
+    Future<void> startSelectedReplay() async {
+      if (selectedSource == null) return;
+      final targetSet = collectionCtrl.createReplayCollection(widget.containerId, selectedSource.id);
+      if (targetSet == null) return;
+      collectionCtrl.startWithExistingSet(targetSet);
+      replayCtrl.startReplay(
+        selectedSource,
+        stretchFactor: factorFromSettings(selectedSource),
+        interpolationEnabled: settings.replayInterpolationEnabled,
+        sessionLabel: 'Replay measurement',
+      );
+    }
+
+    Future<void> startDefaultReplay() async {
+      final duration = Duration(seconds: settings.replayFixedDurationSeconds);
+      final targetSet = collectionCtrl.createDefaultReplayCollection(widget.containerId, duration);
+      if (targetSet == null) return;
+      collectionCtrl.startWithExistingSet(targetSet);
+      replayCtrl.startReplayFromPoints(
+        buildDefaultReplayPoints(duration),
+        stretchFactor: 1,
+        interpolationEnabled: false,
+        sessionLabel: 'Replay from default measurement',
+      );
     }
 
     void handleReplayValueTap(int value) {
       if (!collectionState.isRunning) return;
       collectionCtrl.tapValue(value);
-      if (value == 10 && settings.stopMeasurementOnTen) {
-        finishReplayMeasurementImmediately();
-      }
     }
+
+    final countdownSeconds = replayState.nextTarget == null
+        ? null
+        : (replayState.nextTarget!.tSeconds * replayState.stretchFactor) -
+            (replayState.elapsed.inMilliseconds / 1000.0);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Replay')),
@@ -114,23 +195,23 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
               runSpacing: 8,
               children: [
                 ElevatedButton.icon(
-                  onPressed: selectedSource == null || collectionState.isRunning
+                  onPressed: selectedSource == null || collectionState.isRunning || collectionState.isAwaitingNotes
                       ? null
-                      : () {
-                          final targetSet = collectionCtrl.createReplayCollection(widget.containerId, selectedSource.id);
-                          if (targetSet == null) return;
-                          collectionCtrl.startWithExistingSet(targetSet);
-                          replayCtrl.startReplay(
-                            selectedSource,
-                            stretchFactor: factorFromSettings(selectedSource),
-                            interpolationEnabled: settings.replayInterpolationEnabled,
-                          );
-                        },
+                      : startSelectedReplay,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start replay collection'),
                 ),
                 ElevatedButton.icon(
-                  onPressed: collectionState.isRunning ? finishReplayMeasurement : null,
+                  onPressed: collectionState.isRunning || collectionState.isAwaitingNotes
+                      ? null
+                      : startDefaultReplay,
+                  icon: const Icon(Icons.auto_graph),
+                  label: const Text('Replay default 0→10'),
+                ),
+                ElevatedButton.icon(
+                  onPressed: collectionState.isRunning
+                      ? () => collectionCtrl.requestStop(MeasurementFinishReason.manual)
+                      : null,
                   icon: const Icon(Icons.stop),
                   label: const Text('Finish measurement'),
                 ),
@@ -144,6 +225,7 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
                     settings.copyWith(replayInterpolationEnabled: value),
                   ),
               title: const Text('Replay interpolation'),
+              subtitle: const Text('Applies only to replaying an existing measurement.'),
             ),
             Row(
               children: [
@@ -199,26 +281,24 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
               ),
             const SizedBox(height: 8),
             if (replayState.isRunning && replayState.nextTarget != null) ...[
+              Text('Mode: ${replayState.sessionLabel}'),
               Text('Next target value: ${replayState.nextTarget!.value}'),
-              Builder(builder: (context) {
-                final stretchedTime =
-                    (replayState.elapsed.inMilliseconds / 1000.0) / replayState.stretchFactor;
-                final dt = replayState.nextTarget!.tSeconds - stretchedTime;
-                return Text('Countdown: ${dt.toStringAsFixed(2)} seconds');
-              }),
+              Text('Countdown: ${countdownSeconds!.clamp(0, double.infinity).toStringAsFixed(2)} seconds'),
             ] else if (replaySessionActive && replayState.isCompleted) ...[
-              const Text('Replay playback has ended.'),
+              Text('${replayState.sessionLabel} playback has ended.'),
               const Text('Measurement is still active until you finish it manually.'),
             ],
             const Divider(),
             Text(
               collectionState.isRunning
-                  ? 'You can collect values while replay is running or after playback ends:'
-                  : 'Choose a source and press "Start replay collection".',
+                  ? 'Replay and regular measurement use the same value-entry behavior:'
+                  : 'Choose a source and press one of the replay buttons.',
             ),
+            const SizedBox(height: 4),
+            Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
             const SizedBox(height: 8),
             if (settings.stopMeasurementOnTen)
-              const Text('Tapping value 10 will finish the active replay measurement.'),
+              const Text('Tapping value 10 records the point and ends the active measurement.'),
             Wrap(
               spacing: 4,
               runSpacing: 4,
@@ -235,33 +315,6 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
       ),
     );
   }
-}
-
-Future<String?> _askForReplayNotes(BuildContext context) {
-  final controller = TextEditingController();
-  return showDialog<String>(
-    context: context,
-    builder: (context) {
-      return AlertDialog(
-        title: const Text('Finish measurement'),
-        content: TextField(
-          controller: controller,
-          maxLines: null,
-          decoration: const InputDecoration(hintText: 'Optional notes'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Finish'),
-          ),
-        ],
-      );
-    },
-  );
 }
 
 extension<T> on Iterable<T> {
