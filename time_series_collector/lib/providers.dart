@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models.dart';
@@ -34,6 +37,11 @@ class ContainersNotifier extends StateNotifier<List<DataContainer>> {
   void rename(String id, String name) {
     final c = state.firstWhere((c) => c.id == id);
     _repo.update(c.copyWith(name: name));
+    state = _repo.getAll();
+  }
+
+  void importAll(List<DataContainer> containers) {
+    _repo.replaceAll(containers);
     state = _repo.getAll();
   }
 
@@ -79,12 +87,17 @@ class CollectionStartConfig {
       );
 }
 
+enum MeasurementFinishReason { manual, stopAtTen, ignoredReminders }
+
 class CollectionState {
   final bool isRunning;
   final String? containerId;
   final DataSet? activeSet;
   final Duration elapsed;
   final int ignoredCues;
+  final int? currentValue;
+  final bool isAwaitingNotes;
+  final MeasurementFinishReason? finishReason;
 
   const CollectionState({
     required this.isRunning,
@@ -92,6 +105,9 @@ class CollectionState {
     this.activeSet,
     this.elapsed = Duration.zero,
     this.ignoredCues = 0,
+    this.currentValue,
+    this.isAwaitingNotes = false,
+    this.finishReason,
   });
 
   CollectionState copyWith({
@@ -100,6 +116,11 @@ class CollectionState {
     DataSet? activeSet,
     Duration? elapsed,
     int? ignoredCues,
+    int? currentValue,
+    bool clearCurrentValue = false,
+    bool? isAwaitingNotes,
+    MeasurementFinishReason? finishReason,
+    bool clearFinishReason = false,
   }) {
     return CollectionState(
       isRunning: isRunning ?? this.isRunning,
@@ -107,6 +128,9 @@ class CollectionState {
       activeSet: activeSet ?? this.activeSet,
       elapsed: elapsed ?? this.elapsed,
       ignoredCues: ignoredCues ?? this.ignoredCues,
+      currentValue: clearCurrentValue ? null : (currentValue ?? this.currentValue),
+      isAwaitingNotes: isAwaitingNotes ?? this.isAwaitingNotes,
+      finishReason: clearFinishReason ? null : (finishReason ?? this.finishReason),
     );
   }
 
@@ -122,6 +146,7 @@ final collectionProvider =
 class CollectionController extends StateNotifier<CollectionState> {
   final Ref _ref;
   final DataSetRepository _repo;
+  final AudioPlayer _audioPlayer = AudioPlayer();
   Timer? _timer;
   Duration _sinceLastPoint = Duration.zero;
 
@@ -132,7 +157,7 @@ class CollectionController extends StateNotifier<CollectionState> {
   }
 
   void start(String containerId) {
-    if (state.isRunning) return;
+    if (state.isRunning || state.isAwaitingNotes) return;
     final set = DataSet(containerId: containerId);
     _repo.addSet(set);
     _notifyDataSetChange();
@@ -140,7 +165,7 @@ class CollectionController extends StateNotifier<CollectionState> {
   }
 
   void startWithExistingSet(DataSet set) {
-    if (state.isRunning) return;
+    if (state.isRunning || state.isAwaitingNotes) return;
     _startWithSet(set.containerId, set);
   }
 
@@ -151,6 +176,9 @@ class CollectionController extends StateNotifier<CollectionState> {
       activeSet: set,
       elapsed: Duration.zero,
       ignoredCues: 0,
+      currentValue: null,
+      isAwaitingNotes: false,
+      finishReason: null,
     );
     _sinceLastPoint = Duration.zero;
     _timer = Timer.periodic(const Duration(seconds: 1), _onTick);
@@ -167,7 +195,58 @@ class CollectionController extends StateNotifier<CollectionState> {
     _ref.read(containersProvider.notifier).updateSettings(containerId, updatedSettings);
   }
 
-  void _onTick(Timer t) {
+  Future<void> _emitCue(CueType cueType) async {
+    switch (cueType) {
+      case CueType.beep:
+        await _audioPlayer.stop();
+        await _audioPlayer.play(BytesSource(_buildSineWaveWav()));
+        return;
+      case CueType.flashlight:
+        return;
+    }
+  }
+
+  Uint8List _buildSineWaveWav({
+    double frequencyHz = 880,
+    int durationMs = 250,
+    int sampleRate = 44100,
+  }) {
+    final sampleCount = (sampleRate * durationMs / 1000).round();
+    final dataLength = sampleCount * 2;
+    final byteData = ByteData(44 + dataLength);
+
+    void writeAscii(int offset, String value) {
+      for (var i = 0; i < value.length; i++) {
+        byteData.setUint8(offset + i, value.codeUnitAt(i));
+      }
+    }
+
+    writeAscii(0, 'RIFF');
+    byteData.setUint32(4, 36 + dataLength, Endian.little);
+    writeAscii(8, 'WAVE');
+    writeAscii(12, 'fmt ');
+    byteData.setUint32(16, 16, Endian.little);
+    byteData.setUint16(20, 1, Endian.little);
+    byteData.setUint16(22, 1, Endian.little);
+    byteData.setUint32(24, sampleRate, Endian.little);
+    byteData.setUint32(28, sampleRate * 2, Endian.little);
+    byteData.setUint16(32, 2, Endian.little);
+    byteData.setUint16(34, 16, Endian.little);
+    writeAscii(36, 'data');
+    byteData.setUint32(40, dataLength, Endian.little);
+
+    const amplitude = 0.5;
+    for (var i = 0; i < sampleCount; i++) {
+      final envelope = 1 - (i / sampleCount);
+      final sample = sin(2 * pi * frequencyHz * (i / sampleRate));
+      final value = (sample * 32767 * amplitude * envelope).round();
+      byteData.setInt16(44 + (i * 2), value, Endian.little);
+    }
+
+    return byteData.buffer.asUint8List();
+  }
+
+  Future<void> _onTick(Timer t) async {
     if (!state.isRunning) return;
     final newElapsed = state.elapsed + const Duration(seconds: 1);
     _sinceLastPoint += const Duration(seconds: 1);
@@ -184,8 +263,9 @@ class CollectionController extends StateNotifier<CollectionState> {
       _sinceLastPoint = Duration.zero;
       final ignored = state.ignoredCues + 1;
       state = state.copyWith(ignoredCues: ignored);
+      await _emitCue(settings.cueType);
       if (ignored >= 3) {
-        stop();
+        requestStop(MeasurementFinishReason.ignoredReminders);
       }
     }
   }
@@ -199,17 +279,48 @@ class CollectionController extends StateNotifier<CollectionState> {
     );
     _repo.addPoint(p);
     _sinceLastPoint = Duration.zero;
-    if (state.ignoredCues > 0) {
-      state = state.copyWith(ignoredCues: 0);
+
+    final container = _ref.read(containerRepoProvider).getById(state.containerId!);
+    final shouldStopAtTen = container?.settings.stopMeasurementOnTen == true && value == 10;
+
+    state = state.copyWith(
+      ignoredCues: 0,
+      currentValue: value,
+    );
+
+    if (shouldStopAtTen) {
+      requestStop(MeasurementFinishReason.stopAtTen);
     }
   }
 
   DataSet? createReplayCollection(String containerId, String sourceSetId) {
-    if (state.isRunning) return null;
+    if (state.isRunning || state.isAwaitingNotes) return null;
     final set = DataSet(containerId: containerId, notes: 'Replay of $sourceSetId');
     _repo.addSet(set);
     _notifyDataSetChange();
     return set;
+  }
+
+  DataSet? createDefaultReplayCollection(String containerId, Duration duration) {
+    if (state.isRunning || state.isAwaitingNotes) return null;
+    final set = DataSet(
+      containerId: containerId,
+      notes: 'Replay of default measurement (${duration.inSeconds}s)',
+    );
+    _repo.addSet(set);
+    _notifyDataSetChange();
+    return set;
+  }
+
+  void requestStop(MeasurementFinishReason reason) {
+    if ((!state.isRunning && !state.isAwaitingNotes) || state.activeSet == null) return;
+    _timer?.cancel();
+    _timer = null;
+    state = state.copyWith(
+      isRunning: false,
+      isAwaitingNotes: true,
+      finishReason: reason,
+    );
   }
 
   void toggleSetStarred(String dataSetId) {
@@ -217,10 +328,11 @@ class CollectionController extends StateNotifier<CollectionState> {
     _notifyDataSetChange();
   }
 
-  void stop({String? notes}) {
-    if (!state.isRunning || state.activeSet == null) return;
-    if (notes != null) {
-      _repo.updateSet(state.activeSet!.copyWith(notes: notes));
+  void finalizeStop({String? notes}) {
+    if (state.activeSet == null) return;
+    final noteText = notes?.trim();
+    if (noteText != null && noteText.isNotEmpty) {
+      _repo.updateSet(state.activeSet!.copyWith(notes: noteText));
       _notifyDataSetChange();
     }
     _timer?.cancel();
@@ -228,9 +340,15 @@ class CollectionController extends StateNotifier<CollectionState> {
     state = CollectionState.initial();
   }
 
+  void cancelPendingStop() {
+    if (!state.isAwaitingNotes) return;
+    finalizeStop();
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
+    _audioPlayer.dispose();
     super.dispose();
   }
 }
