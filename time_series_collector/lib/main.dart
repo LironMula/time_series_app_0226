@@ -237,17 +237,27 @@ Future<void> _showPendingStopDialog(
   ref.read(collectionProvider.notifier).finalizeStop(notes: notes);
 }
 
-class TimeSeriesApp extends StatelessWidget {
+class TimeSeriesApp extends ConsumerWidget {
   const TimeSeriesApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref.watch(themeModeProvider);
     return MaterialApp(
       title: 'Time Series Collector',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
+        scaffoldBackgroundColor: Colors.black,
+        useMaterial3: true,
+      ),
+      themeMode: themeMode,
       home: const HomePage(),
     );
   }
@@ -503,6 +513,43 @@ class _ManagementTab extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 16),
+          const SizedBox(height: 24),
+          const Divider(thickness: 2),
+          const SizedBox(height: 8),
+          Text(
+            'Global settings',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  const Text('Background mode:'),
+                  const SizedBox(width: 16),
+                  SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: ThemeMode.light,
+                        label: Text('Light'),
+                        icon: Icon(Icons.light_mode),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.dark,
+                        label: Text('Dark'),
+                        icon: Icon(Icons.dark_mode),
+                      ),
+                    ],
+                    selected: {ref.watch(themeModeProvider)},
+                    onSelectionChanged: (s) =>
+                        ref.read(themeModeProvider.notifier).state = s.first,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           if (selected != null) ...[
             Text(
               'Container properties',
@@ -733,9 +780,12 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
                 child: Text('Tapping value 10 records the point and ends the measurement.'),
               ),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
+            GridView.count(
+              crossAxisCount: 3,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
               children: List.generate(
                 11,
                 (i) {
@@ -753,8 +803,8 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
                         ? () => ref.read(collectionProvider.notifier).tapValue(i)
                         : null,
                     style: ElevatedButton.styleFrom(
-                      minimumSize: const Size(56, 56),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      shape: const CircleBorder(),
+                      padding: EdgeInsets.zero,
                       backgroundColor: bgColor,
                       foregroundColor: fgColor,
                       disabledBackgroundColor: bgColor?.withValues(alpha: 0.4),
@@ -762,7 +812,7 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
                     child: Text(
                       '$i',
                       style: const TextStyle(
-                          fontSize: 20, fontWeight: FontWeight.bold),
+                          fontSize: 22, fontWeight: FontWeight.bold),
                     ),
                   );
                 },
