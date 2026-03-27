@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'histogram.dart';
 import 'models.dart';
 import 'providers.dart';
-import 'repositories.dart';
 
 class HistogramPage extends ConsumerStatefulWidget {
   final String containerId;
@@ -30,8 +29,8 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
   // Draft (config UI) parameters
   int _draftIntervalAmount = 1;
   _IntervalUnit _draftIntervalUnit = _IntervalUnit.week;
-  int _draftPeriodAmount = 1;
-  _IntervalUnit _draftPeriodUnit = _IntervalUnit.week;
+  late DateTime _draftPeriodStart;
+  late DateTime _draftPeriodEnd;
 
   bool _configVisible = true;
 
@@ -51,20 +50,44 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
   void initState() {
     super.initState();
     final now = DateTime.now();
-    _periodEnd = now;
-    _periodStart = now.subtract(_durationFor(_draftPeriodAmount, _draftPeriodUnit));
+    _draftPeriodEnd = now;
+    _draftPeriodStart = now.subtract(const Duration(days: 7));
+    _periodEnd = _draftPeriodEnd;
+    _periodStart = _draftPeriodStart;
+  }
+
+  Future<void> _pickDate({required bool isStart}) async {
+    final initial = isStart ? _draftPeriodStart : _draftPeriodEnd;
+    final first = isStart ? DateTime(2000) : _draftPeriodStart;
+    final last  = isStart ? _draftPeriodEnd : DateTime(2100);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+    );
+    if (picked == null) return;
+    setState(() {
+      if (isStart) {
+        _draftPeriodStart = DateTime(picked.year, picked.month, picked.day);
+      } else {
+        _draftPeriodEnd = DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
+      }
+    });
   }
 
   void _applyConfig() {
-    final now = DateTime.now();
     setState(() {
       _intervalAmount = _draftIntervalAmount;
       _intervalUnit = _draftIntervalUnit;
-      _periodEnd = now;
-      _periodStart = now.subtract(_durationFor(_draftPeriodAmount, _draftPeriodUnit));
+      _periodStart = _draftPeriodStart;
+      _periodEnd = _draftPeriodEnd;
       _configVisible = false;
     });
   }
+
+  String _formatDate(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   @override
   Widget build(BuildContext context) {
@@ -128,36 +151,18 @@ class _HistogramPageState extends ConsumerState<HistogramPage> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const Text('Period:'),
+                  const Text('From:'),
                   const SizedBox(width: 8),
-                  DropdownButton<int>(
-                    value: _draftPeriodAmount,
-                    items: const [
-                      DropdownMenuItem(value: 1,  child: Text('1')),
-                      DropdownMenuItem(value: 2,  child: Text('2')),
-                      DropdownMenuItem(value: 6,  child: Text('6')),
-                      DropdownMenuItem(value: 12, child: Text('12')),
-                      DropdownMenuItem(value: 24, child: Text('24')),
-                    ],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _draftPeriodAmount = v);
-                    },
+                  OutlinedButton(
+                    onPressed: () => _pickDate(isStart: true),
+                    child: Text(_formatDate(_draftPeriodStart)),
                   ),
+                  const SizedBox(width: 16),
+                  const Text('To:'),
                   const SizedBox(width: 8),
-                  DropdownButton<_IntervalUnit>(
-                    value: _draftPeriodUnit,
-                    items: const [
-                      DropdownMenuItem(value: _IntervalUnit.minute, child: Text('minute')),
-                      DropdownMenuItem(value: _IntervalUnit.hour,   child: Text('hour')),
-                      DropdownMenuItem(value: _IntervalUnit.day,    child: Text('day')),
-                      DropdownMenuItem(value: _IntervalUnit.week,   child: Text('week')),
-                      DropdownMenuItem(value: _IntervalUnit.month,  child: Text('month')),
-                    ],
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setState(() => _draftPeriodUnit = v);
-                    },
+                  OutlinedButton(
+                    onPressed: () => _pickDate(isStart: false),
+                    child: Text(_formatDate(_draftPeriodEnd)),
                   ),
                 ],
               ),
