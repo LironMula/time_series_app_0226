@@ -11,6 +11,7 @@ import 'models.dart';
 import 'repositories.dart';
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.light);
+final lowLightProvider  = StateProvider<bool>((ref) => false);
 
 // Initialize repositories from database
 final initializeRepositoriesProvider = FutureProvider<void>((ref) async {
@@ -301,7 +302,7 @@ class CollectionController extends StateNotifier<CollectionState> {
       final ignored = state.ignoredCues + 1;
       state = state.copyWith(ignoredCues: ignored);
       await _emitCue(settings.cueType);
-      if (ignored >= 3) {
+      if (ignored >= 4) {
         requestStop(MeasurementFinishReason.ignoredReminders);
       }
     }

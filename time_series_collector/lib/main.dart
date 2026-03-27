@@ -524,27 +524,44 @@ class _ManagementTab extends ConsumerWidget {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Background mode:'),
-                  const SizedBox(width: 16),
-                  SegmentedButton<ThemeMode>(
-                    segments: const [
-                      ButtonSegment(
-                        value: ThemeMode.light,
-                        label: Text('Light'),
-                        icon: Icon(Icons.light_mode),
-                      ),
-                      ButtonSegment(
-                        value: ThemeMode.dark,
-                        label: Text('Dark'),
-                        icon: Icon(Icons.dark_mode),
+                  Row(
+                    children: [
+                      const Text('Background mode:'),
+                      const SizedBox(width: 16),
+                      SegmentedButton<ThemeMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: ThemeMode.light,
+                            label: Text('Light'),
+                            icon: Icon(Icons.light_mode),
+                          ),
+                          ButtonSegment(
+                            value: ThemeMode.dark,
+                            label: Text('Dark'),
+                            icon: Icon(Icons.dark_mode),
+                          ),
+                        ],
+                        selected: {ref.watch(themeModeProvider)},
+                        onSelectionChanged: (s) =>
+                            ref.read(themeModeProvider.notifier).state = s.first,
                       ),
                     ],
-                    selected: {ref.watch(themeModeProvider)},
-                    onSelectionChanged: (s) =>
-                        ref.read(themeModeProvider.notifier).state = s.first,
                   ),
+                  if (ref.watch(themeModeProvider) == ThemeMode.dark) ...[
+                    const SizedBox(height: 4),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Low light'),
+                      subtitle: const Text(
+                          'Dims value buttons to reduce emitted light'),
+                      value: ref.watch(lowLightProvider),
+                      onChanged: (v) =>
+                          ref.read(lowLightProvider.notifier).state = v,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -725,6 +742,11 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
     if (selectedId == null) return const Center(child: Text('Select a container in management tab'));
     final collectionState = ref.watch(collectionProvider);
     final container = ref.watch(containersProvider).firstWhere((c) => c.id == selectedId);
+    final isDarkLowLight = ref.watch(themeModeProvider) == ThemeMode.dark &&
+        ref.watch(lowLightProvider);
+    final buttonOpacity = !isDarkLowLight
+        ? 1.0
+        : (collectionState.ignoredCues >= 1 ? 0.5 : 0.3);
 
     Future<void> stopCollectionManually() async {
       ref.read(collectionProvider.notifier).requestStop(MeasurementFinishReason.manual);
@@ -780,42 +802,49 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
                 child: Text('Tapping value 10 records the point and ends the measurement.'),
               ),
             const SizedBox(height: 8),
-            GridView.count(
-              crossAxisCount: 3,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: 8,
-              crossAxisSpacing: 8,
-              children: List.generate(
-                11,
-                (i) {
-                  final bucket = container.settings.buckets
-                      .where((b) => b.contains(i))
-                      .firstOrNull;
-                  final bgColor = bucket != null ? Color(bucket.color) : null;
-                  final fgColor = bgColor != null
-                      ? (bgColor.computeLuminance() > 0.4
-                          ? Colors.black87
-                          : Colors.white)
-                      : null;
-                  return ElevatedButton(
-                    onPressed: collectionState.isRunning
-                        ? () => ref.read(collectionProvider.notifier).tapValue(i)
-                        : null,
-                    style: ElevatedButton.styleFrom(
-                      shape: const CircleBorder(),
-                      padding: EdgeInsets.zero,
-                      backgroundColor: bgColor,
-                      foregroundColor: fgColor,
-                      disabledBackgroundColor: bgColor?.withValues(alpha: 0.4),
-                    ),
-                    child: Text(
-                      '$i',
-                      style: const TextStyle(
-                          fontSize: 22, fontWeight: FontWeight.bold),
-                    ),
-                  );
-                },
+            Opacity(
+              opacity: buttonOpacity,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: List.generate(
+                  11,
+                  (i) {
+                    final bucket = container.settings.buckets
+                        .where((b) => b.contains(i))
+                        .firstOrNull;
+                    final bgColor = bucket != null ? Color(bucket.color) : null;
+                    final fgColor = bgColor != null
+                        ? (bgColor.computeLuminance() > 0.4
+                            ? Colors.black87
+                            : Colors.white)
+                        : null;
+                    return SizedBox(
+                      width: 72,
+                      height: 72,
+                      child: ElevatedButton(
+                        onPressed: collectionState.isRunning
+                            ? () => ref
+                                .read(collectionProvider.notifier)
+                                .tapValue(i)
+                            : null,
+                        style: ElevatedButton.styleFrom(
+                          shape: const CircleBorder(),
+                          padding: EdgeInsets.zero,
+                          backgroundColor: bgColor,
+                          foregroundColor: fgColor,
+                          disabledBackgroundColor:
+                              bgColor?.withValues(alpha: 0.4),
+                        ),
+                        child: Text(
+                          '$i',
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
           ],
