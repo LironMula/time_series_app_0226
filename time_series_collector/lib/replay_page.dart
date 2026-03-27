@@ -146,6 +146,18 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
         : (replayState.nextTarget!.tSeconds * replayState.stretchFactor) -
             (replayState.elapsed.inMilliseconds / 1000.0);
 
+    double replayProgress = 0.0;
+    if (replayState.nextTarget != null &&
+        replayState.currentTarget != null &&
+        countdownSeconds != null) {
+      final totalInterval =
+          (replayState.nextTarget!.tSeconds - replayState.currentTarget!.tSeconds) *
+              replayState.stretchFactor;
+      if (totalInterval > 0) {
+        replayProgress = (1.0 - countdownSeconds / totalInterval).clamp(0.0, 1.0);
+      }
+    }
+
     final isDarkLowLight = ref.watch(themeModeProvider) == ThemeMode.dark &&
         ref.watch(lowLightProvider);
 
@@ -308,33 +320,15 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
               ),
             ],
 
-            // ── Replay status text (shown while active) ────────────────
+            // ── Replay status visual (shown while active) ──────────────
             if (replaySessionActive) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Opacity(
                 opacity: isDarkLowLight ? 0.5 : 1.0,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Mode: ${replayState.sessionLabel}'),
-                    Text(
-                        'Current replay value: ${replayState.currentTarget?.value ?? '—'}'),
-                    if (replayState.nextTarget != null) ...[
-                      _buildNextValueRow(
-                          context, replayState.nextTarget!.value, container),
-                      Text(
-                        'Next value in: ${countdownSeconds!.clamp(0, double.infinity).toStringAsFixed(2)} seconds',
-                      ),
-                    ] else
-                      const Text('Next replay value: —'),
-                    if (replayState.isCompleted) ...[
-                      Text('${replayState.sessionLabel} playback has ended.'),
-                      const Text(
-                          'Measurement is still active until you finish it manually.'),
-                    ],
-                  ],
-                ),
+                child: _buildReplayStatusVisual(
+                    context, replayState, container, replayProgress),
               ),
+              const SizedBox(height: 4),
             ],
 
             const Divider(),
@@ -349,26 +343,55 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
     );
   }
 
-  Widget _buildNextValueRow(
-      BuildContext context, int value, DataContainer container) {
-    final bucket = container.settings.buckets
-        .where((b) => b.contains(value))
-        .firstOrNull;
-    final valueColor = bucket != null ? Color(bucket.color) : null;
-    return RichText(
-      text: TextSpan(
-        style: DefaultTextStyle.of(context).style,
-        children: [
-          const TextSpan(text: 'Next replay value: '),
-          TextSpan(
-            text: '$value',
-            style: TextStyle(
-              color: valueColor,
-              fontWeight: FontWeight.bold,
+  Widget _buildReplayStatusVisual(
+    BuildContext context,
+    ReplayState replayState,
+    DataContainer container,
+    double progress,
+  ) {
+    Widget valueCircle(int? value) {
+      final bucket = value != null
+          ? container.settings.buckets.where((b) => b.contains(value)).firstOrNull
+          : null;
+      final bgColor = bucket != null
+          ? Color(bucket.color)
+          : Theme.of(context).colorScheme.surfaceContainerHighest;
+      final fgColor = bucket != null
+          ? (bgColor.computeLuminance() > 0.4 ? Colors.black87 : Colors.white)
+          : Theme.of(context).colorScheme.onSurface;
+      return Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: bgColor),
+        alignment: Alignment.center,
+        child: Text(
+          value?.toString() ?? '—',
+          style: TextStyle(
+              fontSize: 15, fontWeight: FontWeight.bold, color: fgColor),
+        ),
+      );
+    }
+
+    final barColor = Theme.of(context).colorScheme.onSurface;
+    return Row(
+      children: [
+        valueCircle(replayState.currentTarget?.value),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 8,
+                color: barColor,
+                backgroundColor: barColor.withValues(alpha: 0.2),
+              ),
             ),
           ),
-        ],
-      ),
+        ),
+        valueCircle(replayState.nextTarget?.value),
+      ],
     );
   }
 }
