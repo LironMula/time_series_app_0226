@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'database.dart';
 import 'file_saver.dart';
 import 'histogram_page.dart';
@@ -27,7 +29,11 @@ void main() async {
     databaseFactory = databaseFactoryFfi;
   }
   // Android/iOS: sqflite uses native platform channels, no setup needed
-  runApp(const ProviderScope(child: TimeSeriesAppLoader()));
+  final prefs = await SharedPreferences.getInstance();
+  runApp(ProviderScope(
+    overrides: [sharedPrefsProvider.overrideWithValue(prefs)],
+    child: const TimeSeriesAppLoader(),
+  ));
 }
 
 class TimeSeriesAppLoader extends ConsumerStatefulWidget {
@@ -546,7 +552,7 @@ class _ManagementTab extends ConsumerWidget {
                         ],
                         selected: {ref.watch(themeModeProvider)},
                         onSelectionChanged: (s) =>
-                            ref.read(themeModeProvider.notifier).state = s.first,
+                            ref.read(themeModeProvider.notifier).set(s.first),
                       ),
                     ],
                   ),
@@ -559,7 +565,7 @@ class _ManagementTab extends ConsumerWidget {
                           'Dims value buttons to reduce emitted light'),
                       value: ref.watch(lowLightProvider),
                       onChanged: (v) =>
-                          ref.read(lowLightProvider.notifier).state = v,
+                          ref.read(lowLightProvider.notifier).set(v),
                     ),
                   ],
                 ],

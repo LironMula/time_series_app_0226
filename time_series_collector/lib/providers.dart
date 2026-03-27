@@ -5,13 +5,48 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'database.dart';
 import 'models.dart';
 import 'repositories.dart';
 
-final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.light);
-final lowLightProvider  = StateProvider<bool>((ref) => false);
+// Overridden in main() after SharedPreferences.getInstance()
+final sharedPrefsProvider = Provider<SharedPreferences>(
+  (_) => throw UnimplementedError('SharedPreferences not initialized'),
+);
+
+class _ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  final SharedPreferences _prefs;
+  _ThemeModeNotifier(this._prefs)
+      : super((_prefs.getBool('isDarkMode') ?? false)
+            ? ThemeMode.dark
+            : ThemeMode.light);
+
+  void set(ThemeMode mode) {
+    state = mode;
+    _prefs.setBool('isDarkMode', mode == ThemeMode.dark);
+  }
+}
+
+final themeModeProvider =
+    StateNotifierProvider<_ThemeModeNotifier, ThemeMode>(
+        (ref) => _ThemeModeNotifier(ref.read(sharedPrefsProvider)));
+
+class _LowLightNotifier extends StateNotifier<bool> {
+  final SharedPreferences _prefs;
+  _LowLightNotifier(this._prefs)
+      : super(_prefs.getBool('lowLight') ?? false);
+
+  void set(bool value) {
+    state = value;
+    _prefs.setBool('lowLight', value);
+  }
+}
+
+final lowLightProvider =
+    StateNotifierProvider<_LowLightNotifier, bool>(
+        (ref) => _LowLightNotifier(ref.read(sharedPrefsProvider)));
 
 // Initialize repositories from database
 final initializeRepositoriesProvider = FutureProvider<void>((ref) async {
