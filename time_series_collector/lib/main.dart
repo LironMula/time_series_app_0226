@@ -4,7 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
+import 'database.dart';
 import 'file_saver.dart';
 import 'histogram_page.dart';
 import 'models.dart';
@@ -13,8 +16,193 @@ import 'replay.dart';
 import 'replay_page.dart';
 import 'visualization_page.dart';
 
-void main() {
-  runApp(const ProviderScope(child: TimeSeriesApp()));
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWebNoWebWorker;
+  } else if (defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
+  // Android/iOS: sqflite uses native platform channels, no setup needed
+  runApp(const ProviderScope(child: TimeSeriesAppLoader()));
+}
+
+class TimeSeriesAppLoader extends ConsumerStatefulWidget {
+  const TimeSeriesAppLoader({Key? key}) : super(key: key);
+
+  @override
+  ConsumerState<TimeSeriesAppLoader> createState() => _TimeSeriesAppLoaderState();
+}
+
+class _TimeSeriesAppLoaderState extends ConsumerState<TimeSeriesAppLoader> {
+  bool _shouldRetryInit = false;
+
+  @override
+  Widget build(BuildContext context) {
+    // Create a new instance if retrying
+    final initFuture = _shouldRetryInit
+        ? ref.refresh(initializeRepositoriesProvider)
+        : ref.watch(initializeRepositoriesProvider);
+
+    return initFuture.when(
+      data: (_) => const TimeSeriesApp(),
+      loading: () => const MaterialApp(
+        home: Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+      error: (err, stack) {
+        if (err is DatabaseVersionMismatchException) {
+          return MaterialApp(
+            home: Scaffold(
+              body: _buildVersionMismatchDialog(err),
+            ),
+          );
+        }
+        return MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: Text('Initialization error: $err'),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildVersionMismatchDialog(DatabaseVersionMismatchException error) {
+    final needsDowngrade = error.storedVersion > error.currentVersion;
+
+    return Center(
+      child: AlertDialog(
+        title: const Text('Database Version Mismatch'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              needsDowngrade
+                  ? 'Your data is from a newer version of the app (v${error.storedVersion}). '
+                      'The current app is version v${error.currentVersion}.'
+                  : 'The database format has changed between app versions. '
+                      'Your data (v${error.storedVersion}) is incompatible with the current app (v${error.currentVersion}).',
+            ),
+            const SizedBox(height: 16),
+            if (needsDowngrade)
+              const Text(
+                'To use your data, please downgrade the application to a newer version that supports this data format.',
+                style: TextStyle(color: Colors.orange),
+              )
+            else
+              const Text(
+                'Choose an option below to proceed:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+          ],
+        ),
+        actions: [
+          if (needsDowngrade)
+            TextButton(
+              onPressed: () => _showDowngradeInfo(context, error),
+              child: const Text('How to Downgrade'),
+            )
+          else
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+          if (!needsDowngrade)
+            ElevatedButton(
+              onPressed: () => _eraseData(),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+              ),
+              child: const Text(
+                'Erase Existing Data',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _showDowngradeInfo(BuildContext context, DatabaseVersionMismatchException error) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Downgrade Instructions'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Your data was created with app version v${error.storedVersion}, '
+              'but you have version v${error.currentVersion} installed.\n\n'
+              'To access your data, you need to downgrade to version v${error.storedVersion} or later '
+              '(but before v${error.currentVersion}).\n\n'
+              'Options:\n'
+              '• Check the app store for previous versions\n'
+              '• Download an older APK/IPA build\n'
+              '• Restore from a backup of the older app version',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _eraseData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Data Erasure'),
+        content: const Text(
+          'All containers, datasets, and measurements will be permanently deleted. '
+          'This action cannot be undone. A new "default" container will be created.\n\n'
+          'Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text(
+              'Yes, Erase All Data',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await DatabaseHelper.instance.eraseAllData();
+        setState(() {
+          _shouldRetryInit = true;
+        });
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error erasing data: $e')),
+          );
+        }
+      }
+    }
+  }
 }
 
 void _showMessage(BuildContext context, String text) {
@@ -547,14 +735,37 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
             const SizedBox(height: 8),
             Wrap(
               spacing: 6,
+              runSpacing: 6,
               children: List.generate(
                 11,
-                (i) => ElevatedButton(
-                  onPressed: collectionState.isRunning
-                      ? () => ref.read(collectionProvider.notifier).tapValue(i)
-                      : null,
-                  child: Text('$i'),
-                ),
+                (i) {
+                  final bucket = container.settings.buckets
+                      .where((b) => b.contains(i))
+                      .firstOrNull;
+                  final bgColor = bucket != null ? Color(bucket.color) : null;
+                  final fgColor = bgColor != null
+                      ? (bgColor.computeLuminance() > 0.4
+                          ? Colors.black87
+                          : Colors.white)
+                      : null;
+                  return ElevatedButton(
+                    onPressed: collectionState.isRunning
+                        ? () => ref.read(collectionProvider.notifier).tapValue(i)
+                        : null,
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(56, 56),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      backgroundColor: bgColor,
+                      foregroundColor: fgColor,
+                      disabledBackgroundColor: bgColor?.withValues(alpha: 0.4),
+                    ),
+                    child: Text(
+                      '$i',
+                      style: const TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                  );
+                },
               ),
             ),
           ],
@@ -690,19 +901,17 @@ class _CollectionConfigDialogState extends State<_CollectionConfigDialog> {
             onChanged: (v) => setState(() => _assisted = v),
             title: const Text('Assisted collection'),
           ),
-          Row(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('Reminder every (seconds):'),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Slider(
-                  value: _dt.toDouble(),
-                  min: 2,
-                  max: 60,
-                  divisions: 58,
-                  label: '$_dt',
-                  onChanged: _assisted ? (v) => setState(() => _dt = v.round()) : null,
-                ),
+              Slider(
+                value: _dt.toDouble(),
+                min: 2,
+                max: 60,
+                divisions: 58,
+                label: '$_dt',
+                onChanged: _assisted ? (v) => setState(() => _dt = v.round()) : null,
               ),
             ],
           ),
@@ -764,5 +973,10 @@ Future<String?> _askForText(
 }
 
 extension<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
+  T? get firstOrNull {
+    for (final item in this) {
+      return item;
+    }
+    return null;
+  }
 }

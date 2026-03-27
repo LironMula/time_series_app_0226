@@ -5,8 +5,28 @@ import 'dart:typed_data';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'database.dart';
 import 'models.dart';
 import 'repositories.dart';
+
+// Initialize repositories from database
+final initializeRepositoriesProvider = FutureProvider<void>((ref) async {
+  final containerRepo = ref.read(containerRepoProvider);
+  final dataSetRepo = ref.read(dataSetRepoProvider);
+
+  // Load data from database - this may throw DatabaseVersionMismatchException
+  await containerRepo.initialize();
+  await dataSetRepo.initialize();
+
+  // Create default container if none exist
+  if (containerRepo.getAll().isEmpty) {
+    final defaultContainer = DataContainer(
+      name: 'default',
+      settings: ContainerSettings.defaultSettings(),
+    );
+    containerRepo.add(defaultContainer);
+  }
+});
 
 final containerRepoProvider = Provider<ContainerRepository>((ref) {
   return ContainerRepository();
@@ -18,6 +38,8 @@ final dataSetRepoProvider = Provider<DataSetRepository>((ref) {
 
 final containersProvider =
     StateNotifierProvider<ContainersNotifier, List<DataContainer>>((ref) {
+  // Ensure initialization is completed before creating the notifier
+  ref.watch(initializeRepositoriesProvider);
   final repo = ref.read(containerRepoProvider);
   return ContainersNotifier(ref, repo);
 });
