@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'database.dart';
 import 'file_saver.dart';
 import 'histogram_page.dart';
+import 'measurement_value_entry.dart';
 import 'models.dart';
 import 'providers.dart';
 import 'replay.dart';
@@ -758,11 +759,6 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
     if (selectedId == null) return const Center(child: Text('Select a container in management tab'));
     final collectionState = ref.watch(collectionProvider);
     final container = ref.watch(containersProvider).firstWhere((c) => c.id == selectedId);
-    final isDarkLowLight = ref.watch(themeModeProvider) == ThemeMode.dark &&
-        ref.watch(lowLightProvider);
-    final buttonOpacity = !isDarkLowLight
-        ? 1.0
-        : (collectionState.ignoredCues >= 1 ? 0.5 : 0.3);
 
     Future<void> stopCollectionManually() async {
       ref.read(collectionProvider.notifier).requestStop(MeasurementFinishReason.manual);
@@ -806,72 +802,13 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
             ],
           ),
           const SizedBox(height: 12),
-          if (collectionState.isRunning || collectionState.isAwaitingNotes) ...[
-            Opacity(
-              opacity: isDarkLowLight ? 0.5 : 1.0,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Elapsed: ${collectionState.elapsed.inSeconds}s | ignored cues: ${collectionState.ignoredCues}',
-                  ),
-                  const SizedBox(height: 4),
-                  Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
-                  if (container.settings.stopMeasurementOnTen)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 4),
-                      child: Text('Tapping value 10 records the point and ends the measurement.'),
-                    ),
-                ],
-              ),
+          if (collectionState.isRunning || collectionState.isAwaitingNotes)
+            MeasurementValueEntry(
+              collectionState: collectionState,
+              container: container,
+              onTapValue: (i) =>
+                  ref.read(collectionProvider.notifier).tapValue(i),
             ),
-            const SizedBox(height: 8),
-            Opacity(
-              opacity: buttonOpacity,
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: List.generate(
-                  11,
-                  (i) {
-                    final bucket = container.settings.buckets
-                        .where((b) => b.contains(i))
-                        .firstOrNull;
-                    final bgColor = bucket != null ? Color(bucket.color) : null;
-                    final fgColor = bgColor != null
-                        ? (bgColor.computeLuminance() > 0.4
-                            ? Colors.black87
-                            : Colors.white)
-                        : null;
-                    return SizedBox(
-                      width: 72,
-                      height: 72,
-                      child: ElevatedButton(
-                        onPressed: collectionState.isRunning
-                            ? () => ref
-                                .read(collectionProvider.notifier)
-                                .tapValue(i)
-                            : null,
-                        style: ElevatedButton.styleFrom(
-                          shape: const CircleBorder(),
-                          padding: EdgeInsets.zero,
-                          backgroundColor: bgColor,
-                          foregroundColor: fgColor,
-                          disabledBackgroundColor:
-                              bgColor?.withValues(alpha: 0.4),
-                        ),
-                        child: Text(
-                          '$i',
-                          style: const TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
