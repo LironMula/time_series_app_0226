@@ -145,8 +145,19 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
         : (replayState.nextTarget!.tSeconds * replayState.stretchFactor) -
             (replayState.elapsed.inMilliseconds / 1000.0);
 
+    final isDarkLowLight = ref.watch(themeModeProvider) == ThemeMode.dark &&
+        ref.watch(lowLightProvider);
+    final buttonOpacity = !isDarkLowLight
+        ? 1.0
+        : (collectionState.ignoredCues >= 1 ? 0.5 : 0.3);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Replay')),
+      appBar: AppBar(
+        title: const Text('Replay'),
+        backgroundColor: isDarkLowLight
+            ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.8)
+            : null,
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -297,24 +308,61 @@ class _ReplayPageState extends ConsumerState<ReplayPage> {
               const Text('Measurement is still active until you finish it manually.'),
             ],
             const Divider(),
-            Text(
-              collectionState.isRunning
-                  ? 'Replay and regular measurement use the same value-entry behavior:'
-                  : 'Choose a source and press one of the replay buttons.',
+            Opacity(
+              opacity: isDarkLowLight ? 0.5 : 1.0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
+                  if (settings.stopMeasurementOnTen)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text('Tapping value 10 records the point and ends the active measurement.'),
+                    ),
+                ],
+              ),
             ),
-            const SizedBox(height: 4),
-            Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
             const SizedBox(height: 8),
-            if (settings.stopMeasurementOnTen)
-              const Text('Tapping value 10 records the point and ends the active measurement.'),
-            Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: List.generate(
-                11,
-                (i) => ElevatedButton(
-                  onPressed: collectionState.isRunning ? () => handleReplayValueTap(i) : null,
-                  child: Text('$i'),
+            Opacity(
+              opacity: buttonOpacity,
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: List.generate(
+                  11,
+                  (i) {
+                    final bucket = container.settings.buckets
+                        .where((b) => b.contains(i))
+                        .firstOrNull;
+                    final bgColor = bucket != null ? Color(bucket.color) : null;
+                    final fgColor = bgColor != null
+                        ? (bgColor.computeLuminance() > 0.4
+                            ? Colors.black87
+                            : Colors.white)
+                        : null;
+                    return SizedBox(
+                      width: 72,
+                      height: 72,
+                      child: ElevatedButton(
+                        onPressed: collectionState.isRunning
+                            ? () => handleReplayValueTap(i)
+                            : null,
+                        style: ElevatedButton.styleFrom(
+                          shape: const CircleBorder(),
+                          padding: EdgeInsets.zero,
+                          backgroundColor: bgColor,
+                          foregroundColor: fgColor,
+                          disabledBackgroundColor:
+                              bgColor?.withValues(alpha: 0.4),
+                        ),
+                        child: Text(
+                          '$i',
+                          style: const TextStyle(
+                              fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
             ),

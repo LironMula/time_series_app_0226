@@ -282,6 +282,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   @override
   Widget build(BuildContext context) {
     final selectedId = ref.watch(selectedContainerIdProvider);
+    final isDarkLowLight = ref.watch(themeModeProvider) == ThemeMode.dark &&
+        ref.watch(lowLightProvider);
     final tabs = [
       _ManagementTab(selectedId: selectedId),
       _CollectionTab(selectedId: selectedId),
@@ -289,16 +291,24 @@ class _HomePageState extends ConsumerState<HomePage> {
     ];
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Time Series Collector')),
+      appBar: AppBar(
+        title: const Text('Time Series Collector'),
+        backgroundColor: isDarkLowLight
+            ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.8)
+            : null,
+      ),
       body: tabs[_tabIndex],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _tabIndex,
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.settings), label: 'Management'),
-          NavigationDestination(icon: Icon(Icons.sensors), label: 'Collection'),
-          NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Visualisation'),
-        ],
-        onDestinationSelected: (value) => setState(() => _tabIndex = value),
+      bottomNavigationBar: Opacity(
+        opacity: isDarkLowLight ? 0.8 : 1.0,
+        child: NavigationBar(
+          selectedIndex: _tabIndex,
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.settings), label: 'Management'),
+            NavigationDestination(icon: Icon(Icons.sensors), label: 'Collection'),
+            NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Visualisation'),
+          ],
+          onDestinationSelected: (value) => setState(() => _tabIndex = value),
+        ),
       ),
     );
   }
@@ -797,16 +807,24 @@ class _CollectionTabState extends ConsumerState<_CollectionTab> {
           ),
           const SizedBox(height: 12),
           if (collectionState.isRunning || collectionState.isAwaitingNotes) ...[
-            Text(
-              'Elapsed: ${collectionState.elapsed.inSeconds}s | ignored cues: ${collectionState.ignoredCues}',
-            ),
-            const SizedBox(height: 4),
-            Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
-            if (container.settings.stopMeasurementOnTen)
-              const Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text('Tapping value 10 records the point and ends the measurement.'),
+            Opacity(
+              opacity: isDarkLowLight ? 0.5 : 1.0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Elapsed: ${collectionState.elapsed.inSeconds}s | ignored cues: ${collectionState.ignoredCues}',
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Current value: ${collectionState.currentValue?.toString() ?? '—'}'),
+                  if (container.settings.stopMeasurementOnTen)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text('Tapping value 10 records the point and ends the measurement.'),
+                    ),
+                ],
               ),
+            ),
             const SizedBox(height: 8),
             Opacity(
               opacity: buttonOpacity,

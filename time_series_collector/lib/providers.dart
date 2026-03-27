@@ -336,7 +336,10 @@ class CollectionController extends StateNotifier<CollectionState> {
       _sinceLastPoint = Duration.zero;
       final ignored = state.ignoredCues + 1;
       state = state.copyWith(ignoredCues: ignored);
-      await _emitCue(settings.cueType);
+      final suppressCue = _ref.read(lowLightProvider) && ignored == 1;
+      if (!suppressCue) {
+        await _emitCue(settings.cueType);
+      }
       if (ignored >= 4) {
         requestStop(MeasurementFinishReason.ignoredReminders);
       }
