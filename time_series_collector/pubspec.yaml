@@ -39,6 +39,8 @@ dependencies:
   path_provider: ^2.1.0
   sqflite_common_ffi_web: ^0.4.0
   shared_preferences: ^2.3.0
+  vibration: ^3.0.0
+  wakelock_plus: ^1.2.0
 
 dev_dependencies:
   flutter_test:

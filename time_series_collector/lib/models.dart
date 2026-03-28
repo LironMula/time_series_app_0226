@@ -32,7 +32,7 @@ class ValueBucket {
   String get label => '$minInclusive-$maxInclusive';
 }
 
-enum CueType { beep, flashlight }
+enum CueType { beep, flashlight, vibration }
 
 enum ReplayStretchMode { factor, fixedDuration }
 

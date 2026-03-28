@@ -6,6 +6,8 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibration/vibration.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'database.dart';
 import 'models.dart';
@@ -272,6 +274,7 @@ class CollectionController extends StateNotifier<CollectionState> {
     );
     _sinceLastPoint = Duration.zero;
     _timer = Timer.periodic(const Duration(seconds: 1), _onTick);
+    WakelockPlus.enable().ignore();
   }
 
   void applyStartConfig(String containerId, CollectionStartConfig config) {
@@ -292,6 +295,11 @@ class CollectionController extends StateNotifier<CollectionState> {
         await _audioPlayer.play(BytesSource(_buildSineWaveWav()));
         return;
       case CueType.flashlight:
+        return;
+      case CueType.vibration:
+        try {
+          await Vibration.vibrate(duration: 300);
+        } catch (_) {}
         return;
     }
   }
@@ -439,6 +447,7 @@ class CollectionController extends StateNotifier<CollectionState> {
     _timer?.cancel();
     _timer = null;
     state = CollectionState.initial();
+    WakelockPlus.disable().ignore();
   }
 
   void cancelPendingStop() {
