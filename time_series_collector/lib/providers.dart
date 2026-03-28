@@ -119,7 +119,24 @@ class ContainersNotifier extends StateNotifier<List<DataContainer>> {
   }
 }
 
-final selectedContainerIdProvider = StateProvider<String?>((ref) => null);
+class _SelectedContainerNotifier extends StateNotifier<String?> {
+  final SharedPreferences _prefs;
+  _SelectedContainerNotifier(this._prefs)
+      : super(_prefs.getString('selectedContainerId'));
+
+  void set(String? id) {
+    state = id;
+    if (id == null) {
+      _prefs.remove('selectedContainerId');
+    } else {
+      _prefs.setString('selectedContainerId', id);
+    }
+  }
+}
+
+final selectedContainerIdProvider =
+    StateNotifierProvider<_SelectedContainerNotifier, String?>(
+        (ref) => _SelectedContainerNotifier(ref.read(sharedPrefsProvider)));
 
 final dataSetRefreshProvider = StateProvider<int>((ref) => 0);
 

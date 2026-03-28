@@ -323,15 +323,16 @@ class _ContainerSelector extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final containers = ref.watch(containersProvider);
+    final validatedId = containers.any((c) => c.id == selectedId) ? selectedId : null;
     return DropdownButton<String>(
-      value: selectedId,
+      value: validatedId,
       hint: const Text('Select container'),
       isExpanded: true,
       items: containers
           .map((c) => DropdownMenuItem(value: c.id, child: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis)))
           .toList(),
       onChanged: (value) =>
-          ref.read(selectedContainerIdProvider.notifier).state = value,
+          ref.read(selectedContainerIdProvider.notifier).set(value),
     );
   }
 }
@@ -395,7 +396,7 @@ class _ManagementTab extends ConsumerWidget {
         final actual = ref.read(containersProvider).last;
         ref.read(dataSetRepoProvider).mergeImported(imported, newContainerId: actual.id);
         ref.read(dataSetRefreshProvider.notifier).state++;
-        ref.read(selectedContainerIdProvider.notifier).state = actual.id;
+        ref.read(selectedContainerIdProvider.notifier).set(actual.id);
         if (context.mounted) {
           _showMessage(context, 'Imported container from ${file.name}');
         }
@@ -455,7 +456,7 @@ class _ManagementTab extends ConsumerWidget {
               );
           final actual = ref.read(containersProvider).last;
           ref.read(dataSetRepoProvider).mergeImported(imported, newContainerId: actual.id);
-          ref.read(selectedContainerIdProvider.notifier).state = actual.id;
+          ref.read(selectedContainerIdProvider.notifier).set(actual.id);
         }
         ref.read(dataSetRefreshProvider.notifier).state++;
         if (context.mounted) {
@@ -693,7 +694,7 @@ class _ManagementTab extends ConsumerWidget {
                       final actual = ref.read(containersProvider).last;
                       ref.read(dataSetRepoProvider).mergeImported(imported, newContainerId: actual.id);
                       ref.read(dataSetRefreshProvider.notifier).state++;
-                      ref.read(selectedContainerIdProvider.notifier).state = actual.id;
+                      ref.read(selectedContainerIdProvider.notifier).set(actual.id);
                     } catch (_) {
                       if (context.mounted) {
                         _showMessage(context, 'Invalid import payload');
